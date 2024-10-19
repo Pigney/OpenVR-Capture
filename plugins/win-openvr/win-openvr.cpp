@@ -11,6 +11,10 @@
 #include <util/dstr.h>
 #include <sys/stat.h>
 #include <d3d11.h>
+#include <thread>
+#include <atomic>
+
+std::atomic<bool> init_inprog(false);
 
 #include <algorithm>
 #include <vector>
@@ -115,16 +119,19 @@ static void win_openvr_update_properties(void *data)
 				    context->device_height, 1);
 }
 
-static void win_openvr_init(void *data, bool forced = false)
+static void vr_init(void *data, bool forced)
 {
 	struct win_openvr *context = (win_openvr *)data;
 
 	if (context->initialized)
 		return;
 
+	init_inprog = true;
+
 	// Dont attempt to init OVR too often due to memory leak in VR_Init
 	// TODO: OpenVR v1.10.30 should no longer have the memory leakA
 	if (GetTickCount64() - 1000 < context->lastCheckTick && !forced) {
+		init_inprog = false;
 		return;
 	}
 
@@ -134,7 +141,8 @@ static void win_openvr_init(void *data, bool forced = false)
 	if (err != vr::VRInitError_None) {
 		debug("OpenVR not available");
 		// OpenVR not available
-		 context->lastCheckTick = GetTickCount64();
+		context->lastCheckTick = GetTickCount64();
+		init_inprog = false;
 		return;
 	}
 	IsVRSystemInitialized = true;
@@ -146,6 +154,7 @@ static void win_openvr_init(void *data, bool forced = false)
 			       &featureLevel, &context->ctx11);
 	if (FAILED(hr)) {
 		warn("win_openvr_show: D3D11CreateDevice failed");
+		init_inprog = false;
 		return;
 	}
 
@@ -154,6 +163,7 @@ static void win_openvr_init(void *data, bool forced = false)
 		context->dev11, (void **)&context->mirrorSrv);
 	if (!context->mirrorSrv) {
 		warn("win_openvr_show: GetMirrorTextureD3D11 failed");
+		init_inprog = false;
 		return;
 	}
 
@@ -161,6 +171,7 @@ static void win_openvr_init(void *data, bool forced = false)
 	context->mirrorSrv->GetResource(&context->tex);
 	if (!context->tex) {
 		warn("win_openvr_show: GetResource failed");
+		init_inprog = false;
 		return;
 	}
 
@@ -169,15 +180,17 @@ static void win_openvr_init(void *data, bool forced = false)
 	context->tex->QueryInterface<ID3D11Texture2D>(&tex2D);
 	if (!tex2D) {
 		warn("win_openvr_show: QueryInterface failed");
+		init_inprog = false;
 		return;
 	}
 
 	D3D11_TEXTURE2D_DESC desc;
 	tex2D->GetDesc(&desc);
-	//if (desc.Width == 0 || desc.Height == 0) {
-	//	warn("win_openvr_show: device width or height is 0");
-	//	return;
-	//}
+	if (desc.Width == 0 || desc.Height == 0) {
+		warn("win_openvr_show: device width or height is 0");
+		init_inprog = false;
+		return;
+	}
 	context->device_width = desc.Width;
 	context->device_height = desc.Height;
 	win_openvr_update_properties(data);
@@ -205,6 +218,7 @@ static void win_openvr_init(void *data, bool forced = false)
 	hr = context->dev11->CreateTexture2D(&desc, NULL, &context->texCrop);
 	if (FAILED(hr)) {
 		warn("win_openvr_show: CreateTexture2D failed");
+		init_inprog = false;
 		return;
 	}
 
@@ -214,6 +228,7 @@ static void win_openvr_init(void *data, bool forced = false)
 					      (void **)&res);
 	if (FAILED(hr)) {
 		warn("win_openvr_show: QueryInterface failed");
+		init_inprog = false;
 		return;
 	}
 
@@ -221,6 +236,7 @@ static void win_openvr_init(void *data, bool forced = false)
 	hr = res->GetSharedHandle(&handle);
 	if (FAILED(hr)) {
 		warn("win_openvr_show: GetSharedHandle failed");
+		init_inprog = false;
 		return;
 	}
 	res->Release();
@@ -231,6 +247,19 @@ static void win_openvr_init(void *data, bool forced = false)
 	obs_leave_graphics();
 
 	context->initialized = true;
+	init_inprog = false;
+}
+
+static void win_openvr_init(void *data, bool forced = true)
+{
+	struct win_openvr *context = (win_openvr *)data;
+
+	if (context->initialized || init_inprog)
+		return;
+
+	init_inprog = true;
+
+	std::thread(vr_init, context, forced).detach();
 }
 
 static void win_openvr_deinit(void *data)
