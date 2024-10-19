@@ -1,8 +1,8 @@
 project(win-openvr)
 
 if(MSVC)
-    include_directories(../../deps/openvr-master)
-	link_directories(../../deps/openvr-master)
+    include_directories(../../deps/openvr)
+	link_directories(../../deps/openvr)
 endif()
 
 set(win-openvr_SOURCES
@@ -12,5 +12,4 @@ add_library(win-openvr MODULE
 	${win-openvr_SOURCES})
 target_link_libraries(win-openvr
 	libobs)
-
-install_obs_plugin_with_data(win-openvr data)
+set_target_properties_obs(win-openvr PROPERTIES FOLDER plugins)
