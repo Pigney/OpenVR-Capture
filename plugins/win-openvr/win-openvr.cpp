@@ -134,7 +134,7 @@ static void win_openvr_init(void *data, bool forced = false)
 	if (err != vr::VRInitError_None) {
 		debug("OpenVR not available");
 		// OpenVR not available
-		context->lastCheckTick = GetTickCount64();
+		 context->lastCheckTick = GetTickCount64();
 		return;
 	}
 	IsVRSystemInitialized = true;
@@ -174,10 +174,10 @@ static void win_openvr_init(void *data, bool forced = false)
 
 	D3D11_TEXTURE2D_DESC desc;
 	tex2D->GetDesc(&desc);
-	if (desc.Width == 0 || desc.Height == 0) {
-		warn("win_openvr_show: device width or height is 0");
-		return;
-	}
+	//if (desc.Width == 0 || desc.Height == 0) {
+	//	warn("win_openvr_show: device width or height is 0");
+	//	return;
+	//}
 	context->device_width = desc.Width;
 	context->device_height = desc.Height;
 	win_openvr_update_properties(data);
@@ -280,7 +280,7 @@ static void win_openvr_deinit(void *data)
 
 static const char *win_openvr_get_name(void *unused)
 {
-	UNUSED_PARAMETER(unused);
+	//UNUSED_PARAMETER(unused);
 	return "OpenVR Capture";
 }
 
@@ -501,7 +501,7 @@ static obs_properties_t *win_openvr_properties(void *data)
 	obs_property_t *p;
 
 	p = obs_properties_add_bool(props, "righteye",
-				    obs_module_text("RightEye"));
+				    obs_module_text("Right Eye"));
 	obs_property_set_modified_callback(p, crop_preset_flip);
 
 	p = obs_properties_add_list(props, "croppreset",
@@ -546,18 +546,18 @@ static void load_presets(void)
 	presets_file = obs_module_file("win-openvr-presets.ini");
 	if (presets_file) {
 		FILE *f = fopen(presets_file, "rb");
-		if (f) {
-			croppreset p = {0};
-			while (fscanf(f, "%u,%u,%u,%u,%[^\n]\n", &p.crop.top,
-				      &p.crop.bottom, &p.crop.left,
-				      &p.crop.right, p.name) > 0) {
-				croppresets.push_back(p);
-			}
-			fclose(f);
-		} else {
-			blog(LOG_WARNING,
-			     "Failed to load presets file 'win-openvr-presets.ini' not found!");
+		//if (f) {
+		croppreset p = {0};
+		while (fscanf(f, "%u,%u,%u,%u,%[^\n]\n", &p.crop.top,
+					&p.crop.bottom, &p.crop.left,
+					&p.crop.right, p.name) > 0) {
+			croppresets.push_back(p);
 		}
+		fclose(f);
+		//} else {
+		//	blog(LOG_WARNING,
+		//	     "Failed to load presets file 'win-openvr-presets.ini' not found!");
+		//}
 		bfree(presets_file);
 	} else {
 		blog(LOG_WARNING,
