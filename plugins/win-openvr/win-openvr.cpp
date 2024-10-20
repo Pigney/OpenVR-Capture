@@ -3,8 +3,6 @@
 // by Keijo "Kegetys" Ruotsalainen, http://www.kegetys.fi
 //
 
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <obs-module.h>
 #include <graphics/image-file.h>
 #include <util/platform.h>
@@ -13,6 +11,7 @@
 #include <d3d11.h>
 #include <thread>
 #include <atomic>
+#include <stdint.h>
 
 std::atomic<bool> init_inprog(false);
 
@@ -69,7 +68,7 @@ struct win_openvr {
 
 	ID3D11Texture2D *texCrop;
 
-	DWORD lastCheckTick;
+	ULONGLONG lastCheckTick;
 
 	// Set in win_openvr_init, 0 until then.
 	unsigned int device_width;
@@ -215,6 +214,7 @@ static void vr_init(void *data, bool forced)
 	// Create cropped, linear texture
 	// Using linear here will cause correct sRGB gamma to be applied
 	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 	hr = context->dev11->CreateTexture2D(&desc, NULL, &context->texCrop);
 	if (FAILED(hr)) {
 		warn("win_openvr_show: CreateTexture2D failed");
@@ -241,9 +241,15 @@ static void vr_init(void *data, bool forced)
 	}
 	res->Release();
 
+	#ifdef _WIN64
+		uint32_t GShandle = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handle));
+	#else
+		uint32_t GShandle = static_cast<uint32_t>(handle);
+	#endif
+
 	obs_enter_graphics();
 	gs_texture_destroy(context->texture);
-	context->texture = gs_texture_open_shared((uint32_t)handle);
+	context->texture = gs_texture_open_shared(GShandle);
 	obs_leave_graphics();
 
 	context->initialized = true;
@@ -319,14 +325,14 @@ static void win_openvr_update(void *data, obs_data_t *settings)
 	context->righteye = obs_data_get_bool(settings, "righteye");
 
 	if (context->righteye) {
-		context->crop.left = obs_data_get_int(settings, "cropleft");
-		context->crop.right = obs_data_get_int(settings, "cropright");
+		context->crop.left = static_cast<unsigned int>(obs_data_get_int(settings, "cropleft"));
+		context->crop.right = static_cast<unsigned int>(obs_data_get_int(settings, "cropright"));
 	} else {
-		context->crop.left = obs_data_get_int(settings, "cropright");
-		context->crop.right = obs_data_get_int(settings, "cropleft");
+		context->crop.left = static_cast<unsigned int>(obs_data_get_int(settings, "cropright"));
+		context->crop.right = static_cast<unsigned int>(obs_data_get_int(settings, "cropleft"));
 	}
-	context->crop.top = obs_data_get_int(settings, "croptop");
-	context->crop.bottom = obs_data_get_int(settings, "cropbottom");
+	context->crop.top = static_cast<unsigned int>(obs_data_get_int(settings, "croptop"));
+	context->crop.bottom = static_cast<unsigned int>(obs_data_get_int(settings, "cropbottom"));
 
 	if (context->initialized) {
 		win_openvr_deinit(data);
