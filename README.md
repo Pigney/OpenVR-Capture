@@ -4,6 +4,9 @@ This 64bit plugin allows capturing directly from OpenVR/SteamVR mirror surface i
 
 A fork of OBS-OpenVR-Input-Plugin, originally made by Keijo "Kegetys" Ruotsalainen
 
+### Q. How does this affect performance?
+A. This results in a reduction of ~3 FPS.
+
 ---------
 
 Compiling:
