@@ -505,11 +505,11 @@ static bool crop_preset_flip(obs_properties_t *props, obs_property_t *p,
 {
 	bool flip = obs_data_get_bool(s, "righteye");
 	obs_property_set_description(obs_properties_get(props, "cropleft"),
-				     flip ? obs_module_text("CropLeft")
-					  : obs_module_text("CropRight"));
+				     flip ? obs_module_text("Crop Left")
+					  : obs_module_text("Crop Right"));
 	obs_property_set_description(obs_properties_get(props, "cropright"),
-				     flip ? obs_module_text("CropRight")
-					  : obs_module_text("CropLeft"));
+				     flip ? obs_module_text("Crop Right")
+					  : obs_module_text("Crop Left"));
 	return true;
 }
 
@@ -550,19 +550,19 @@ static obs_properties_t *win_openvr_properties(void *data)
 	obs_property_set_modified_callback(p, crop_preset_changed);
 
 	p = obs_properties_add_int_slider(props, "croptop",
-					  obs_module_text("CropTop"), 0, 0, 1);
+					  obs_module_text("Crop Top"), 0, 0, 1);
 	context->crop_top = p;
 	obs_property_set_modified_callback(p, crop_preset_manual);
 	p = obs_properties_add_int_slider(
-		props, "cropbottom", obs_module_text("CropBottom"), 0, 0, 1);
+		props, "cropbottom", obs_module_text("Crop Bottom"), 0, 0, 1);
 	context->crop_bottom = p;
 	obs_property_set_modified_callback(p, crop_preset_manual);
 	p = obs_properties_add_int_slider(props, "cropleft",
-					  obs_module_text("CropLeft"), 0, 0, 1);
+					  obs_module_text("Crop Left"), 0, 0, 1);
 	context->crop_left = p;
 	obs_property_set_modified_callback(p, crop_preset_manual);
 	p = obs_properties_add_int_slider(
-		props, "cropright", obs_module_text("CropRight"), 0, 0, 1);
+		props, "cropright", obs_module_text("Crop Right"), 0, 0, 1);
 	context->crop_right = p;
 	obs_property_set_modified_callback(p, crop_preset_manual);
 
