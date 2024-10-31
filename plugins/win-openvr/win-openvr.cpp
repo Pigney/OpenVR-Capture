@@ -122,7 +122,7 @@ static void vr_init(void *data, bool forced)
 {
 	struct win_openvr *context = (win_openvr *)data;
 
-	if (context->initialized)
+	if (context->initialized || !vr::VR_IsHmdPresent())
 		return;
 
 	init_inprog = true;
