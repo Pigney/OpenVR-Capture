@@ -9,6 +9,12 @@ A. This has virtually no effect on performance.
 
 ---------
 
+Installation:
+- Download latest release .zip
+- Extract all files to the root of your OBS Studio installation.
+
+---------
+
 Compiling:
 - Pull OBS Studio source code recursively (`git clone https://github.com/obsproject/obs-studio.git --recursive`)
 - Extract source code of this repo into OBS Studio source code
