@@ -124,13 +124,15 @@ static void vr_init(void *data, bool forced)
 
 	if (context->initialized)
 		return;
-	if (!vr::VR_IsHmdPresent())
+	
+	if (!vr::VR_IsRuntimeInstalled()) {
+		warn("win_openvr_show: SteamVR Runtime inactive!");
 		return;
+	}
 
 	init_inprog = true;
 
-	// Dont attempt to init OVR too often due to memory leak in VR_Init
-	// TODO: OpenVR v1.10.30 should no longer have the memory leakA
+	// Dont attempt to init OpenVR too often to reduce CPU usage
 	if (GetTickCount64() - 1000 < context->lastCheckTick && !forced) {
 		init_inprog = false;
 		return;
@@ -159,12 +161,22 @@ static void vr_init(void *data, bool forced)
 		return;
 	}
 
-	vr::VRCompositor()->GetMirrorTextureD3D11(
+	if (!vr::VRCompositor()) {
+		warn("win_openvr_show: VR Compositor not found");
+		init_inprog = false;
+		vr::VR_Shutdown();
+		return;
+	}
+
+	vr::EVRCompositorError composError = vr::VRCompositor()->GetMirrorTextureD3D11(
 		context->righteye ? vr::Eye_Right : vr::Eye_Left,
 		context->dev11, (void **)&context->mirrorSrv);
-	if (!context->mirrorSrv) {
-		warn("win_openvr_show: GetMirrorTextureD3D11 failed");
+	
+	// Check for any compositor errors reported by OpenVR
+	if (composError != vr::VRCompositorError_None || !context->mirrorSrv) {
+		warn("win_openvr_show: GetMirrorTextureD3D11 failed, %d", composError);
 		init_inprog = false;
+		vr::VR_Shutdown();
 		return;
 	}
 
@@ -173,6 +185,7 @@ static void vr_init(void *data, bool forced)
 	if (!context->tex) {
 		warn("win_openvr_show: GetResource failed");
 		init_inprog = false;
+		vr::VR_Shutdown();
 		return;
 	}
 
@@ -182,6 +195,7 @@ static void vr_init(void *data, bool forced)
 	if (!tex2D) {
 		warn("win_openvr_show: QueryInterface failed");
 		init_inprog = false;
+		vr::VR_Shutdown();
 		return;
 	}
 
@@ -190,6 +204,7 @@ static void vr_init(void *data, bool forced)
 	if (desc.Width == 0 || desc.Height == 0) {
 		warn("win_openvr_show: device width or height is 0");
 		init_inprog = false;
+		vr::VR_Shutdown();
 		return;
 	}
 	context->device_width = desc.Width;
@@ -221,6 +236,7 @@ static void vr_init(void *data, bool forced)
 	if (FAILED(hr)) {
 		warn("win_openvr_show: CreateTexture2D failed");
 		init_inprog = false;
+		vr::VR_Shutdown();
 		return;
 	}
 
@@ -231,6 +247,7 @@ static void vr_init(void *data, bool forced)
 	if (FAILED(hr)) {
 		warn("win_openvr_show: QueryInterface failed");
 		init_inprog = false;
+		vr::VR_Shutdown();
 		return;
 	}
 
