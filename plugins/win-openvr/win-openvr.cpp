@@ -1,6 +1,7 @@
 //
-// OpenVR Capture input plugin for OBS
-// by Keijo "Kegetys" Ruotsalainen, http://www.kegetys.fi
+// OpenVR Capture
+// Forked by pigney
+// Originally "OpenVR Capture input plugin for OBS" by Keijo "Kegetys" Ruotsalainen
 //
 
 #include <obs-module.h>
@@ -40,25 +41,12 @@ std::atomic<bool> init_inprog(false);
 	blog(LOG_WARNING, "[%s] " message, \
 	     obs_source_get_name(context->source), ##__VA_ARGS__)
 
-struct crop {
-	unsigned int top;
-	unsigned int left;
-	unsigned int bottom;
-	unsigned int right;
-};
-
-struct croppreset {
-	char name[128];
-	crop crop;
-};
-std::vector<croppreset> croppresets;
-
 struct win_openvr {
 	obs_source_t *source;
 
 	bool righteye;
-	int croppreset;
-	crop crop;
+	double active_aspect_ratio;
+	bool ar_crop;
 
 	gs_texture_t *texture;
 	ID3D11Device *dev11;
@@ -81,42 +69,9 @@ struct win_openvr {
 
 	bool initialized;
 	bool active;
-
-	// Set in win_openvr_properties, null until then.
-	obs_property_t *crop_left;
-	obs_property_t *crop_right;
-	obs_property_t *crop_top;
-	obs_property_t *crop_bottom;
 };
 
 bool IsVRSystemInitialized = false;
-
-// Update the crop sliders with the correct maximum values or hide them if
-// we do not know.
-static void win_openvr_update_properties(void *data)
-{
-	struct win_openvr *context = (win_openvr *)data;
-	if (!(context->crop_left && context->crop_right && context->crop_top &&
-	      context->crop_bottom)) {
-		return;
-	}
-
-	const bool visible = context->device_width > 0 &&
-			     context->device_height > 0;
-	obs_property_set_visible(context->crop_left, visible);
-	obs_property_set_visible(context->crop_right, visible);
-	obs_property_set_visible(context->crop_top, visible);
-	obs_property_set_visible(context->crop_bottom, visible);
-
-	obs_property_int_set_limits(context->crop_left, 0,
-				    context->device_width, 1);
-	obs_property_int_set_limits(context->crop_right, 0,
-				    context->device_width, 1);
-	obs_property_int_set_limits(context->crop_top, 0,
-				    context->device_height, 1);
-	obs_property_int_set_limits(context->crop_bottom, 0,
-				    context->device_height, 1);
-}
 
 static void vr_init(void *data, bool forced)
 {
@@ -209,22 +164,42 @@ static void vr_init(void *data, bool forced)
 	}
 	context->device_width = desc.Width;
 	context->device_height = desc.Height;
-	win_openvr_update_properties(data);
 
-	// Apply wanted cropping to size
-	const crop &crop = context->crop;
-	// warn("crop top %u left %u bottom %u right %u", crop.top, crop.left, crop.bottom, crop.right);
-	context->x = std::clamp(crop.left, 0u, desc.Width - 1);
-	context->y = std::clamp(crop.top, 0u, desc.Height - 1);
-	const unsigned int remainingWidth = desc.Width - context->x;
-	const unsigned int remainingHeight = desc.Height - context->y;
-	desc.Width =
-		remainingWidth - std::clamp(crop.right, 0u, remainingWidth - 1);
-	desc.Height = remainingHeight -
-		      std::clamp(crop.bottom, 0u, remainingHeight - 1);
+	if (!context->ar_crop) {
+		context->x = 0;
+		context->y = 0;
+		context->width = context->device_width;
+		context->height = context->device_height;
+	} else {
+		/// NEW CROP METHOD
+		double input_aspect_ratio = static_cast<double>(context->device_width) / context->device_height;
+		double active_aspect_ratio = context->active_aspect_ratio;
 
-	context->width = desc.Width;
-	context->height = desc.Height;
+		unsigned int crop_top = 0, crop_bottom = 0, crop_left = 0, crop_right = 0;
+
+		if (input_aspect_ratio > active_aspect_ratio) {
+			unsigned int cropped_width = static_cast<unsigned int>(context->device_height * active_aspect_ratio);
+			unsigned int width_difference = context->device_width - cropped_width;
+			crop_left = width_difference / 2;
+			crop_right = width_difference - crop_left;
+		} else if (input_aspect_ratio < active_aspect_ratio) {
+			unsigned int cropped_height = static_cast<unsigned int>(context->device_width / active_aspect_ratio);
+			unsigned int height_difference = context->device_height - cropped_height;
+			crop_top = height_difference / 2;
+			crop_bottom = height_difference - crop_top;
+		} else {
+
+		}
+
+		context->x = crop_left;
+		context->y = crop_top;
+		context->width = context->device_width - crop_left - crop_right;
+		context->height = context->device_height - crop_top - crop_bottom;
+		// END NEW CROP METHOD
+	}
+
+	desc.Width = context->width;
+	desc.Height = context->height;
 
 	tex2D->Release();
 
@@ -256,6 +231,7 @@ static void vr_init(void *data, bool forced)
 	if (FAILED(hr)) {
 		warn("win_openvr_show: GetSharedHandle failed");
 		init_inprog = false;
+		vr::VR_Shutdown();
 		return;
 	}
 	res->Release();
@@ -329,7 +305,6 @@ static void win_openvr_deinit(void *data)
 
 	context->device_width = 0;
 	context->device_height = 0;
-	win_openvr_update_properties(context);
 }
 
 static const char *win_openvr_get_name(void *unused)
@@ -343,15 +318,29 @@ static void win_openvr_update(void *data, obs_data_t *settings)
 	struct win_openvr *context = (win_openvr *)data;
 	context->righteye = obs_data_get_bool(settings, "righteye");
 
-	if (context->righteye) {
-		context->crop.left = static_cast<unsigned int>(obs_data_get_int(settings, "cropleft"));
-		context->crop.right = static_cast<unsigned int>(obs_data_get_int(settings, "cropright"));
+	// if (context->righteye) { // L-R
+
+	// } else { // R-L
+
+	// }
+
+	context->active_aspect_ratio = obs_data_get_double(settings, "aspect_ratio");
+
+	if (context->active_aspect_ratio == -1.0) {
+		context->ar_crop = false;
 	} else {
-		context->crop.left = static_cast<unsigned int>(obs_data_get_int(settings, "cropright"));
-		context->crop.right = static_cast<unsigned int>(obs_data_get_int(settings, "cropleft"));
+		context->ar_crop = true;
+
+		if (context->active_aspect_ratio == 0.0) {
+			int custom_width = (int)obs_data_get_int(settings, "custom_aspect_width");
+			int custom_height = (int)obs_data_get_int(settings, "custom_aspect_height");
+			if (custom_width > 0 && custom_height > 0) {
+				context->active_aspect_ratio = static_cast<double>(custom_width) / custom_height;
+			} else {
+				context->active_aspect_ratio = 4.0 / 3.0;
+			}
+		}
 	}
-	context->crop.top = static_cast<unsigned int>(obs_data_get_int(settings, "croptop"));
-	context->crop.bottom = static_cast<unsigned int>(obs_data_get_int(settings, "cropbottom"));
 
 	if (context->initialized) {
 		win_openvr_deinit(data);
@@ -362,10 +351,9 @@ static void win_openvr_update(void *data, obs_data_t *settings)
 static void win_openvr_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_bool(settings, "righteye", true);
-	obs_data_set_default_int(settings, "cropleft", 0);
-	obs_data_set_default_int(settings, "cropright", 0);
-	obs_data_set_default_int(settings, "croptop", 0);
-	obs_data_set_default_int(settings, "cropbottom", 0);
+	obs_data_set_default_double(settings, "aspect_ratio", -1.0);
+	obs_data_set_default_int(settings, "custom_aspect_width", 4);
+	obs_data_set_default_int(settings, "custom_aspect_height", 3);
 }
 
 static uint32_t win_openvr_getwidth(void *data)
@@ -406,6 +394,8 @@ static void *win_openvr_create(obs_data_t *settings, obs_source_t *source)
 
 	context->width = context->height = 100;
 
+	context->active_aspect_ratio = 4.0 / 3.0;
+
 	win_openvr_update(context, settings);
 	return context;
 }
@@ -431,7 +421,6 @@ static void win_openvr_render(void *data, gs_effect_t *effect)
 		return;
 	}
 
-	// Crop from full size mirror texture
 	// This step is required even without cropping as the full res mirror texture is in sRGB space
 	D3D11_BOX poksi = {
 		context->x,
@@ -441,8 +430,7 @@ static void win_openvr_render(void *data, gs_effect_t *effect)
 		context->y + context->height,
 		1,
 	};
-	context->ctx11->CopySubresourceRegion(context->texCrop, 0, 0, 0, 0,
-					      context->tex, 0, &poksi);
+	context->ctx11->CopySubresourceRegion(context->texCrop, 0, 0, 0, 0, context->tex, 0, &poksi);
 	context->ctx11->Flush();
 
 	// Draw from OpenVR shared mirror texture
@@ -482,56 +470,6 @@ static void win_openvr_tick(void *data, float seconds)
 	}
 }
 
-static bool crop_preset_changed(obs_properties_t *props, obs_property_t *p,
-				obs_data_t *s)
-{
-	UNUSED_PARAMETER(props);
-	UNUSED_PARAMETER(p);
-
-	int sel = (int)obs_data_get_int(s, "croppreset") - 1;
-
-	if (sel >= croppresets.size() || sel < 0)
-		return false;
-
-	bool flip = obs_data_get_bool(s, "righteye");
-
-	// Mirror preset horizontally if right eye is captured
-	const crop &crop = croppresets[sel].crop;
-	obs_data_set_double(s, "cropleft", crop.left);
-	obs_data_set_double(s, "cropright", crop.right);
-	obs_data_set_double(s, "croptop", crop.top);
-	obs_data_set_double(s, "cropbottom", crop.bottom);
-
-	return true;
-}
-
-static bool crop_preset_manual(obs_properties_t *props, obs_property_t *p,
-			       obs_data_t *s)
-{
-	UNUSED_PARAMETER(props);
-	UNUSED_PARAMETER(p);
-
-	if (obs_data_get_int(s, "croppreset") != 0) {
-		// Slider moved manually, disable preset
-		obs_data_set_int(s, "croppreset", 0);
-		return true;
-	}
-	return false;
-}
-
-static bool crop_preset_flip(obs_properties_t *props, obs_property_t *p,
-			     obs_data_t *s)
-{
-	bool flip = obs_data_get_bool(s, "righteye");
-	obs_property_set_description(obs_properties_get(props, "cropleft"),
-				     flip ? obs_module_text("Crop Left")
-					  : obs_module_text("Crop Right"));
-	obs_property_set_description(obs_properties_get(props, "cropright"),
-				     flip ? obs_module_text("Crop Right")
-					  : obs_module_text("Crop Left"));
-	return true;
-}
-
 static bool button_reset_callback(obs_properties_t *props, obs_property_t *p,
 				  void *data)
 {
@@ -547,6 +485,21 @@ static bool button_reset_callback(obs_properties_t *props, obs_property_t *p,
 	return false;
 }
 
+static bool ar_modd(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	double aspect_ratio = obs_data_get_double(settings, "aspect_ratio");
+
+	bool custom_active = (aspect_ratio == 0.0);
+
+	obs_property_t *custom_width = obs_properties_get(props, "custom_aspect_width");
+	obs_property_t *custom_height = obs_properties_get(props, "custom_aspect_height");
+
+	obs_property_set_visible(custom_width, custom_active);
+	obs_property_set_visible(custom_height, custom_active);
+
+	return true;
+}
+
 static obs_properties_t *win_openvr_properties(void *data)
 {
 	win_openvr *context = (win_openvr *)data;
@@ -556,67 +509,29 @@ static obs_properties_t *win_openvr_properties(void *data)
 
 	p = obs_properties_add_bool(props, "righteye",
 				    obs_module_text("Right Eye"));
-	obs_property_set_modified_callback(p, crop_preset_flip);
 
-	p = obs_properties_add_list(props, "croppreset",
-				    obs_module_text("Preset"),
-				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(p, "none", 0);
-	int i = 1;
-	for (const auto c : croppresets) {
-		obs_property_list_add_int(p, c.name, i++);
-	}
-	obs_property_set_modified_callback(p, crop_preset_changed);
+	p = obs_properties_add_list(props, "aspect_ratio", obs_module_text("Aspect Ratio"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_FLOAT);
+	obs_property_list_add_float(p, "Native", -1.0);
+	obs_property_list_add_float(p, "16:9", 16.0 / 9.0);
+	obs_property_list_add_float(p, "4:3", 4.0 / 3.0);
+	obs_property_list_add_float(p, "Custom", 0.0);
 
-	p = obs_properties_add_int_slider(props, "croptop",
-					  obs_module_text("Crop Top"), 0, 0, 1);
-	context->crop_top = p;
-	obs_property_set_modified_callback(p, crop_preset_manual);
-	p = obs_properties_add_int_slider(
-		props, "cropbottom", obs_module_text("Crop Bottom"), 0, 0, 1);
-	context->crop_bottom = p;
-	obs_property_set_modified_callback(p, crop_preset_manual);
-	p = obs_properties_add_int_slider(props, "cropleft",
-					  obs_module_text("Crop Left"), 0, 0, 1);
-	context->crop_left = p;
-	obs_property_set_modified_callback(p, crop_preset_manual);
-	p = obs_properties_add_int_slider(
-		props, "cropright", obs_module_text("Crop Right"), 0, 0, 1);
-	context->crop_right = p;
-	obs_property_set_modified_callback(p, crop_preset_manual);
+	obs_property_set_modified_callback(p, ar_modd);
+
+	p = obs_properties_add_int(props, "custom_aspect_width", obs_module_text("Ratio Width"), 1, 100, 1);
+	obs_property_set_visible(p, false);
+	p = obs_properties_add_int(props, "custom_aspect_height", obs_module_text("Ratio Height"), 1, 100, 1);
+	obs_property_set_visible(p, false);
 
 	p = obs_properties_add_button(props, "resetsteamvr",
 				      "Reinitialize OpenVR Source",
 				      button_reset_callback);
 
-	win_openvr_update_properties(data);
+	obs_data_t *settings = obs_source_get_settings(context->source);
+	ar_modd(props, NULL, settings);
+	obs_data_release(settings);
 
 	return props;
-}
-
-static void load_presets(void)
-{
-	char *presets_file = NULL;
-	presets_file = obs_module_file("win-openvr-presets.ini");
-	if (presets_file) {
-		FILE *f = fopen(presets_file, "rb");
-		//if (f) {
-		croppreset p = {0};
-		while (fscanf(f, "%u,%u,%u,%u,%[^\n]\n", &p.crop.top,
-					&p.crop.bottom, &p.crop.left,
-					&p.crop.right, p.name) > 0) {
-			croppresets.push_back(p);
-		}
-		fclose(f);
-		//} else {
-		//	blog(LOG_WARNING,
-		//	     "Failed to load presets file 'win-openvr-presets.ini' not found!");
-		//}
-		bfree(presets_file);
-	} else {
-		blog(LOG_WARNING,
-		     "Failed to load presets file 'win-openvr-presets.ini' not found!");
-	}
 }
 
 OBS_DECLARE_MODULE()
@@ -641,6 +556,5 @@ bool obs_module_load(void)
 	info.video_tick = win_openvr_tick;
 	info.get_properties = win_openvr_properties;
 	obs_register_source(&info);
-	load_presets();
 	return true;
 }
