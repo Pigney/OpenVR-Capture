@@ -84,11 +84,6 @@ static void vr_init(void *data, bool forced)
 
 	if (context->initialized)
 		return;
-	
-	if (!vr::VR_IsRuntimeInstalled()) {
-		warn("win_openvr_show: SteamVR Runtime inactive!");
-		return;
-	}
 
 	init_inprog = true;
 
@@ -284,6 +279,10 @@ static void win_openvr_init(void *data, bool forced = true)
 
 	if (context->initialized || init_inprog)
 		return;
+	if (!vr::VR_IsRuntimeInstalled()) {
+		warn("win_openvr_show: SteamVR Runtime inactive!");
+		return;
+	}
 
 	init_inprog = true;
 
