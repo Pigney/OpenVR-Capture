@@ -1,6 +1,8 @@
 project(win-openvr)
 
 if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /GL")
+    set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG /OPT:REF /OPT:ICF")
     include_directories(../../deps/openvr)
 	link_directories(../../deps/openvr)
 endif()

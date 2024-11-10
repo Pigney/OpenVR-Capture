@@ -12,6 +12,7 @@
 #include <d3d11.h>
 #include <thread>
 #include <atomic>
+#include <future>
 #include <stdint.h>
 
 std::atomic<bool> init_inprog(false);
@@ -66,6 +67,10 @@ struct win_openvr {
 	unsigned int y;
 	unsigned int width;
 	unsigned int height;
+
+	double scale_factor;
+	int x_offset;
+	int y_offset;
 
 	bool initialized;
 	bool active;
@@ -162,41 +167,61 @@ static void vr_init(void *data, bool forced)
 		vr::VR_Shutdown();
 		return;
 	}
+	// Obtain display size
 	context->device_width = desc.Width;
 	context->device_height = desc.Height;
 
-	if (!context->ar_crop) {
-		context->x = 0;
-		context->y = 0;
-		context->width = context->device_width;
-		context->height = context->device_height;
-	} else {
+	// Pan and zoom
+	int x = 0;
+	int y = 0;
+
+	double scale_factor = context->scale_factor;
+	if (scale_factor < 1.0)
+		scale_factor = 1.0;
+
+	unsigned int scaled_width = static_cast<unsigned int>(context->device_width / scale_factor);
+	unsigned int scaled_height = static_cast<unsigned int>(context->device_height / scale_factor);
+
+	if (!context->righteye) {
+		x = context->device_width - scaled_width;
+	}
+
+	context->width = scaled_width;
+	context->height = scaled_height;
+
+	// check for non-native AR, then proceed.
+	if (context->ar_crop) {
 		/// NEW CROP METHOD
-		double input_aspect_ratio = static_cast<double>(context->device_width) / context->device_height;
+		double input_aspect_ratio = static_cast<double>(context->width) / context->height;
 		double active_aspect_ratio = context->active_aspect_ratio;
 
-		unsigned int crop_top = 0, crop_bottom = 0, crop_left = 0, crop_right = 0;
-
 		if (input_aspect_ratio > active_aspect_ratio) {
-			unsigned int cropped_width = static_cast<unsigned int>(context->device_height * active_aspect_ratio);
-			unsigned int width_difference = context->device_width - cropped_width;
-			crop_left = width_difference / 2;
-			crop_right = width_difference - crop_left;
+			unsigned int cropped_width = static_cast<unsigned int>(context->height * active_aspect_ratio);
+			context->width = cropped_width;
 		} else if (input_aspect_ratio < active_aspect_ratio) {
-			unsigned int cropped_height = static_cast<unsigned int>(context->device_width / active_aspect_ratio);
-			unsigned int height_difference = context->device_height - cropped_height;
-			crop_top = height_difference / 2;
-			crop_bottom = height_difference - crop_top;
-		} else {
-
+			unsigned int cropped_height = static_cast<unsigned int>(context->width / active_aspect_ratio);
+			context->height = cropped_height;
 		}
-
-		context->x = crop_left;
-		context->y = crop_top;
-		context->width = context->device_width - crop_left - crop_right;
-		context->height = context->device_height - crop_top - crop_bottom;
 		// END NEW CROP METHOD
 	}
+
+	int x_offset = context->x_offset;
+	int y_offset = context->y_offset;
+
+	if (!context->righteye) {
+		x_offset = -x_offset;
+	}
+
+	x += x_offset;
+	y += y_offset;
+
+	if (x < 0) x = 0;
+	if (y < 0) y = 0;
+	if (x + context->width > context->device_width) x = context->device_width - context->width;
+	if (y + context->height > context->device_height) y = context->device_height - context->height;
+
+	context->x = x;
+	context->y = y;
 
 	desc.Width = context->width;
 	desc.Height = context->height;
@@ -251,6 +276,8 @@ static void vr_init(void *data, bool forced)
 	init_inprog = false;
 }
 
+std::future<void> init_future;
+
 static void win_openvr_init(void *data, bool forced = true)
 {
 	struct win_openvr *context = (win_openvr *)data;
@@ -260,7 +287,7 @@ static void win_openvr_init(void *data, bool forced = true)
 
 	init_inprog = true;
 
-	std::thread(vr_init, context, forced).detach();
+	init_future = std::async(std::launch::async, vr_init, context, forced);
 }
 
 static void win_openvr_deinit(void *data)
@@ -324,6 +351,15 @@ static void win_openvr_update(void *data, obs_data_t *settings)
 
 	// }
 
+	// zoom/scaling
+	context->scale_factor = obs_data_get_double(settings, "scale_factor");
+	// if (context->scale_factor < 1.00) {
+	// 	context->scale_factor = 1.00;
+	// }
+
+	context->x_offset = (int)obs_data_get_int(settings, "x_offset");
+	context->y_offset = (int)obs_data_get_int(settings, "y_offset");
+
 	context->active_aspect_ratio = obs_data_get_double(settings, "aspect_ratio");
 
 	if (context->active_aspect_ratio == -1.0) {
@@ -337,7 +373,7 @@ static void win_openvr_update(void *data, obs_data_t *settings)
 			if (custom_width > 0 && custom_height > 0) {
 				context->active_aspect_ratio = static_cast<double>(custom_width) / custom_height;
 			} else {
-				context->active_aspect_ratio = 4.0 / 3.0;
+				context->active_aspect_ratio = 16.0 / 9.0;
 			}
 		}
 	}
@@ -352,8 +388,11 @@ static void win_openvr_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_bool(settings, "righteye", true);
 	obs_data_set_default_double(settings, "aspect_ratio", -1.0);
-	obs_data_set_default_int(settings, "custom_aspect_width", 4);
-	obs_data_set_default_int(settings, "custom_aspect_height", 3);
+	obs_data_set_default_int(settings, "custom_aspect_width", 16);
+	obs_data_set_default_int(settings, "custom_aspect_height", 9);
+	obs_data_set_default_double(settings, "scale_factor", 1.0);
+	obs_data_set_default_int(settings, "x_offset", 0);
+	obs_data_set_default_int(settings, "y_offset", 0);
 }
 
 static uint32_t win_openvr_getwidth(void *data)
@@ -507,9 +546,9 @@ static obs_properties_t *win_openvr_properties(void *data)
 	obs_properties_t *props = obs_properties_create();
 	obs_property_t *p;
 
-	p = obs_properties_add_bool(props, "righteye",
-				    obs_module_text("Right Eye"));
+	p = obs_properties_add_bool(props, "righteye", obs_module_text("Right Eye"));
 
+	// Preset aspect ratios
 	p = obs_properties_add_list(props, "aspect_ratio", obs_module_text("Aspect Ratio"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_FLOAT);
 	obs_property_list_add_float(p, "Native", -1.0);
 	obs_property_list_add_float(p, "16:9", 16.0 / 9.0);
@@ -523,9 +562,12 @@ static obs_properties_t *win_openvr_properties(void *data)
 	p = obs_properties_add_int(props, "custom_aspect_height", obs_module_text("Ratio Height"), 1, 100, 1);
 	obs_property_set_visible(p, false);
 
-	p = obs_properties_add_button(props, "resetsteamvr",
-				      "Reinitialize OpenVR Source",
-				      button_reset_callback);
+	// Pan and zoom
+	p = obs_properties_add_float_slider(props, "scale_factor", obs_module_text("Zoom"), 1.0, 5.0, 0.01);
+	p = obs_properties_add_int(props, "x_offset", obs_module_text("Horizontal Offset"), -10000, 10000, 1);
+	p = obs_properties_add_int(props, "y_offset", obs_module_text("Vertical Offset"), -10000, 10000, 1);
+
+	p = obs_properties_add_button(props, "resetsteamvr", "Reinitialize OpenVR Source", button_reset_callback);
 
 	obs_data_t *settings = obs_source_get_settings(context->source);
 	ar_modd(props, NULL, settings);
