@@ -4,16 +4,17 @@ This plugin allows capturing directly from OpenVR/SteamVR in full resolution.
 
 A fork of OBS-OpenVR-Input-Plugin, originally made by Keijo "Kegetys" Ruotsalainen
 
+![obs64_u5mWzFK5w5](https://github.com/user-attachments/assets/28a32da3-f7de-4bca-8f09-78b7b9cebd60)
+
+
 ### Q. How does this affect performance?
 A. This has virtually no effect on performance.
 ### Q. What benefits does this have over the original?
 A.
 - Crop function replaced with realtime Aspect Ratio dropdown with Zoom and Offsets.
-- Initialization is asynchronous which eliminates stutter in OBS Studio
+- Threaded initialization prevents stutter in OBS Studio.
 - OpenVR SDK updated from v1.12.5 to v2.5.1
-- Runtime check prevents SteamVR crash on launch, making it usable while livestreaming
-- Various minor performance tweaks
-- Can be compiled individually while only using cmake
+- Minor performance tweaks.
 
 ---------
 
