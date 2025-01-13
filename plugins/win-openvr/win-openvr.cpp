@@ -12,8 +12,12 @@
 #include <d3d11.h>
 #include <thread>
 #include <atomic>
-#include <future>
 #include <stdint.h>
+#include <mutex>
+
+std::mutex dx11_mutex;
+ID3D11Device* shared_device = nullptr;
+ID3D11DeviceContext* shared_context = nullptr;
 
 std::atomic<bool> init_inprog(false);
 
@@ -23,11 +27,11 @@ std::atomic<bool> init_inprog(false);
 #pragma comment(lib, "d3d11.lib")
 
 #include "headers/openvr.h"
-#ifdef _WIN64
+// #ifdef _WIN64
 #pragma comment(lib, "lib/win64/openvr_api.lib")
-#else
-#pragma comment(lib, "lib/win32/openvr_api.lib")
-#endif
+// #else
+// #pragma comment(lib, "lib/win32/openvr_api.lib")
+// #endif
 
 #define blog(log_level, message, ...) \
 	blog(log_level, "[win_openvr] " message, ##__VA_ARGS__)
@@ -55,6 +59,8 @@ struct win_openvr {
 	ID3D11Resource *tex;
 	ID3D11ShaderResourceView *mirrorSrv;
 
+	IDXGIResource *res;
+
 	ID3D11Texture2D *texCrop;
 
 	ULONGLONG lastCheckTick;
@@ -78,207 +84,15 @@ struct win_openvr {
 
 bool IsVRSystemInitialized = false;
 
-static void vr_init(void *data, bool forced)
-{
-	struct win_openvr *context = (win_openvr *)data;
 
-	if (context->initialized)
-		return;
-
-	init_inprog = true;
-
-	// Dont attempt to init OpenVR too often to reduce CPU usage
-	if (GetTickCount64() - 1000 < context->lastCheckTick && !forced) {
-		init_inprog = false;
-		return;
-	}
-
-	// Init OpenVR, create D3D11 device and get shared mirror texture
-	vr::EVRInitError err = vr::VRInitError_None;
-	vr::VR_Init(&err, vr::VRApplication_Background);
-	if (err != vr::VRInitError_None) {
-		debug("OpenVR not available");
-		// OpenVR not available
-		context->lastCheckTick = GetTickCount64();
-		init_inprog = false;
-		return;
-	}
-	IsVRSystemInitialized = true;
-
-	HRESULT hr;
-	D3D_FEATURE_LEVEL featureLevel;
-	hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, 0, 0, 0, 0,
-			       D3D11_SDK_VERSION, &context->dev11,
-			       &featureLevel, &context->ctx11);
-	if (FAILED(hr)) {
-		warn("win_openvr_show: D3D11CreateDevice failed");
-		init_inprog = false;
-		return;
-	}
-
-	if (!vr::VRCompositor()) {
-		warn("win_openvr_show: VR Compositor not found");
-		init_inprog = false;
-		vr::VR_Shutdown();
-		return;
-	}
-
-	vr::EVRCompositorError composError = vr::VRCompositor()->GetMirrorTextureD3D11(
-		context->righteye ? vr::Eye_Right : vr::Eye_Left,
-		context->dev11, (void **)&context->mirrorSrv);
-	
-	// Check for any compositor errors reported by OpenVR
-	if (composError != vr::VRCompositorError_None || !context->mirrorSrv) {
-		warn("win_openvr_show: GetMirrorTextureD3D11 failed, %d", composError);
-		init_inprog = false;
-		vr::VR_Shutdown();
-		return;
-	}
-
-	// Get ID3D11Resource from shader resource view
-	context->mirrorSrv->GetResource(&context->tex);
-	if (!context->tex) {
-		warn("win_openvr_show: GetResource failed");
-		init_inprog = false;
-		vr::VR_Shutdown();
-		return;
-	}
-
-	// Get the size from Texture2D
-	ID3D11Texture2D *tex2D;
-	context->tex->QueryInterface<ID3D11Texture2D>(&tex2D);
-	if (!tex2D) {
-		warn("win_openvr_show: QueryInterface failed");
-		init_inprog = false;
-		vr::VR_Shutdown();
-		return;
-	}
-
-	D3D11_TEXTURE2D_DESC desc;
-	tex2D->GetDesc(&desc);
-	if (desc.Width == 0 || desc.Height == 0) {
-		warn("win_openvr_show: device width or height is 0");
-		init_inprog = false;
-		vr::VR_Shutdown();
-		return;
-	}
-	// Obtain display size
-	context->device_width = desc.Width;
-	context->device_height = desc.Height;
-
-	// Pan and zoom
-	int x = 0;
-	int y = 0;
-
-	double scale_factor = context->scale_factor;
-	if (scale_factor < 1.0)
-		scale_factor = 1.0;
-
-	unsigned int scaled_width = static_cast<unsigned int>(context->device_width / scale_factor);
-	unsigned int scaled_height = static_cast<unsigned int>(context->device_height / scale_factor);
-
-	if (!context->righteye) {
-		x = context->device_width - scaled_width;
-	}
-
-	context->width = scaled_width;
-	context->height = scaled_height;
-
-	// check for non-native AR, then proceed.
-	if (context->ar_crop) {
-		/// NEW CROP METHOD
-		double input_aspect_ratio = static_cast<double>(context->width) / context->height;
-		double active_aspect_ratio = context->active_aspect_ratio;
-
-		if (input_aspect_ratio > active_aspect_ratio) {
-			unsigned int cropped_width = static_cast<unsigned int>(context->height * active_aspect_ratio);
-			context->width = cropped_width;
-		} else if (input_aspect_ratio < active_aspect_ratio) {
-			unsigned int cropped_height = static_cast<unsigned int>(context->width / active_aspect_ratio);
-			context->height = cropped_height;
-		}
-		// END NEW CROP METHOD
-	}
-
-	int x_offset = context->x_offset;
-	int y_offset = context->y_offset;
-
-	if (!context->righteye) {
-		x_offset = -x_offset;
-	}
-
-	x += x_offset;
-	y += y_offset;
-
-	if (x < 0) x = 0;
-	if (y < 0) y = 0;
-	if (x + context->width > context->device_width) x = context->device_width - context->width;
-	if (y + context->height > context->device_height) y = context->device_height - context->height;
-
-	context->x = x;
-	context->y = y;
-
-	desc.Width = context->width;
-	desc.Height = context->height;
-
-	tex2D->Release();
-
-	// Create cropped, linear texture
-	// Using linear here will cause correct sRGB gamma to be applied
-	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-	hr = context->dev11->CreateTexture2D(&desc, NULL, &context->texCrop);
-	if (FAILED(hr)) {
-		warn("win_openvr_show: CreateTexture2D failed");
-		init_inprog = false;
-		vr::VR_Shutdown();
-		return;
-	}
-
-	// Get IDXGIResource, then share handle, and open it in OBS device
-	IDXGIResource *res;
-	hr = context->texCrop->QueryInterface(__uuidof(IDXGIResource),
-					      (void **)&res);
-	if (FAILED(hr)) {
-		warn("win_openvr_show: QueryInterface failed");
-		init_inprog = false;
-		vr::VR_Shutdown();
-		return;
-	}
-
-	HANDLE handle = NULL;
-	hr = res->GetSharedHandle(&handle);
-	if (FAILED(hr)) {
-		warn("win_openvr_show: GetSharedHandle failed");
-		init_inprog = false;
-		vr::VR_Shutdown();
-		return;
-	}
-	res->Release();
-
-	#ifdef _WIN64
-		uint32_t GShandle = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handle));
-	#else
-		uint32_t GShandle = static_cast<uint32_t>(handle);
-	#endif
-
-	obs_enter_graphics();
-	gs_texture_destroy(context->texture);
-	context->texture = gs_texture_open_shared(GShandle);
-	obs_leave_graphics();
-
-	context->initialized = true;
-	init_inprog = false;
-}
-
-std::future<void> init_future;
-
+/// This is the messiest code i have written in my life, one day i will fix it but that day is not today.
 static void win_openvr_init(void *data, bool forced = true)
 {
 	struct win_openvr *context = (win_openvr *)data;
 
 	if (context->initialized || init_inprog)
 		return;
+	
 	if (!vr::VR_IsRuntimeInstalled()) {
 		warn("win_openvr_show: SteamVR Runtime inactive!");
 		return;
@@ -286,14 +100,179 @@ static void win_openvr_init(void *data, bool forced = true)
 
 	init_inprog = true;
 
-	init_future = std::async(std::launch::async, vr_init, context, forced);
+	std::thread([context, forced]() {
+		std::lock_guard<std::mutex> lock(dx11_mutex);
+
+		if (!shared_device) {
+			HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &shared_device, NULL, &shared_context);
+			if (FAILED(hr)) {
+				warn("win_openvr_init: SHARED D3D11CreateDevice failed");
+				init_inprog = false;
+				vr::VR_Shutdown();
+				return;
+			}
+		}
+
+		context->dev11 = shared_device;
+		context->ctx11 = shared_context;
+		context->dev11->AddRef();
+		context->ctx11->AddRef();
+
+		vr::EVRInitError err = vr::VRInitError_None;
+		vr::VR_Init(&err, vr::VRApplication_Background);
+		if (err != vr::VRInitError_None) {
+			warn("win_openvr_init: OpenVR initialization failed!");
+			init_inprog = false;
+			vr::VR_Shutdown();
+			return;
+		}
+
+		IsVRSystemInitialized = true;
+
+		if (!vr::VRCompositor()) {
+			warn("win_openvr_show: VR Compositor not found");
+			init_inprog = false;
+			vr::VR_Shutdown();
+			return;
+		}
+
+		vr::EVRCompositorError composError = vr::VRCompositor()->GetMirrorTextureD3D11(context->righteye ? vr::Eye_Right : vr::Eye_Left, context->dev11, (void **)&context->mirrorSrv);
+		
+		// Check for any compositor errors reported by OpenVR
+		// if (composError != vr::VRCompositorError_None || !context->mirrorSrv) {
+		// 	warn("win_openvr_init: GetMirrorTextureD3D11 failed, %d", composError);
+		// 	init_inprog = false;
+		// 	vr::VR_Shutdown();
+		// 	return;
+		// }
+
+		// Get ID3D11Resource from shader resource view
+		context->mirrorSrv->GetResource(&context->tex);
+		if (context->tex) {
+			D3D11_TEXTURE2D_DESC desc;
+			ID3D11Texture2D *tex2D = nullptr;
+			context->tex->QueryInterface<ID3D11Texture2D>(&tex2D);
+			if (tex2D) {
+				tex2D->GetDesc(&desc);
+				context->device_width = desc.Width;
+				context->device_height = desc.Height;
+
+				// Pan and zoom
+				int x = 0;
+				int y = 0;
+
+				double scale_factor = context->scale_factor;
+				if (scale_factor < 1.0)
+					scale_factor = 1.0;
+
+				unsigned int scaled_width = static_cast<unsigned int>(context->device_width / scale_factor);
+				unsigned int scaled_height = static_cast<unsigned int>(context->device_height / scale_factor);
+
+				if (!context->righteye) {
+					x = context->device_width - scaled_width;
+				}
+
+				context->width = scaled_width;
+				context->height = scaled_height;
+
+				// check for non-native AR, then proceed.
+				if (context->ar_crop) {
+					/// NEW CROP METHOD
+					double input_aspect_ratio = static_cast<double>(context->width) / context->height;
+					double active_aspect_ratio = context->active_aspect_ratio;
+
+					if (input_aspect_ratio > active_aspect_ratio) {
+						unsigned int cropped_width = static_cast<unsigned int>(context->height * active_aspect_ratio);
+						context->width = cropped_width;
+					} else if (input_aspect_ratio < active_aspect_ratio) {
+						unsigned int cropped_height = static_cast<unsigned int>(context->width / active_aspect_ratio);
+						context->height = cropped_height;
+					}
+					// END NEW CROP METHOD
+				}
+
+				int x_offset = context->x_offset;
+				int y_offset = context->y_offset;
+
+				if (!context->righteye) {
+					x_offset = -x_offset;
+				}
+
+				x += x_offset;
+				y += y_offset;
+
+				if (x < 0) x = 0;
+				if (y < 0) y = 0;
+				if (x + context->width > context->device_width) x = context->device_width - context->width;
+				if (y + context->height > context->device_height) y = context->device_height - context->height;
+
+				context->x = x;
+				context->y = y;
+
+				desc.Width = context->width;
+				desc.Height = context->height;
+				desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+				desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+
+				HRESULT hr = context->dev11->CreateTexture2D(&desc, NULL, &context->texCrop);
+				if (FAILED(hr)) {
+					warn("win_openvr_show: CreateTexture2D failed");
+					init_inprog = false;
+					vr::VR_Shutdown();
+					return;
+				}
+
+				// Get IDXGIResource, then share handle, and open it in OBS device
+				// IDXGIResource *res;
+				hr = context->texCrop->QueryInterface(__uuidof(IDXGIResource), (void **)&context->res);
+				if (FAILED(hr)) {
+					warn("win_openvr_show: QueryInterface failed");
+					init_inprog = false;
+					vr::VR_Shutdown();
+					return;
+				}
+
+				HANDLE handle = NULL;
+				hr = context->res->GetSharedHandle(&handle);
+				if (FAILED(hr)) {
+					warn("win_openvr_show: GetSharedHandle failed");
+					init_inprog = false;
+					vr::VR_Shutdown();
+					return;
+				}
+				context->res->Release();
+
+				#ifdef _WIN64
+					uint32_t GShandle = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handle));
+				#else
+					uint32_t GShandle = static_cast<uint32_t>(handle);
+				#endif
+
+				obs_enter_graphics();
+				gs_texture_destroy(context->texture);
+				context->texture = gs_texture_open_shared(GShandle);
+				obs_leave_graphics();
+
+				tex2D->Release();
+			}
+		}
+
+		context->initialized = true;
+		init_inprog = false;
+	}).detach();
 }
 
 static void win_openvr_deinit(void *data)
 {
 	struct win_openvr *context = (win_openvr *)data;
 
-	context->initialized = false;
+	{
+		std::lock_guard<std::mutex> lock(dx11_mutex);
+		if (IsVRSystemInitialized) {
+			vr::VR_Shutdown();
+			IsVRSystemInitialized = false;
+		}
+	}
 
 	if (context->texture) {
 		obs_enter_graphics();
@@ -302,35 +281,7 @@ static void win_openvr_deinit(void *data)
 		context->texture = NULL;
 	}
 
-	if (context->tex)
-		context->tex->Release();
-	if (context->texCrop)
-		context->texCrop->Release();
-	//  if (context->mirrorSrv)
-	//vr::VRCompositor()->ReleaseMirrorTextureD3D11(context->mirrorSrv);
-	//context->mirrorSrv->Release();
-
-	if (IsVRSystemInitialized) {
-		IsVRSystemInitialized = false;
-		vr::VR_Shutdown(); // Releases mirrorSrv
-	}
-
-	if (context->ctx11)
-		context->ctx11->Release();
-	if (context->dev11) {
-		if (context->dev11->Release() != 0) {
-			warn("win_openvr_deinit: device refcount not zero!");
-		}
-	}
-
-	context->ctx11 = NULL;
-	context->dev11 = NULL;
-	context->tex = NULL;
-	context->mirrorSrv = NULL;
-	context->texCrop = NULL;
-
-	context->device_width = 0;
-	context->device_height = 0;
+	context->initialized = false;
 }
 
 static const char *win_openvr_get_name(void *unused)
@@ -343,12 +294,6 @@ static void win_openvr_update(void *data, obs_data_t *settings)
 {
 	struct win_openvr *context = (win_openvr *)data;
 	context->righteye = obs_data_get_bool(settings, "righteye");
-
-	// if (context->righteye) { // L-R
-
-	// } else { // R-L
-
-	// }
 
 	// zoom/scaling
 	context->scale_factor = obs_data_get_double(settings, "scale_factor");
@@ -408,8 +353,7 @@ static uint32_t win_openvr_getheight(void *data)
 
 static void win_openvr_show(void *data)
 {
-	win_openvr_init(data,
-			true); // When showing do forced init without delay
+	win_openvr_init(data, true); // When showing do forced init without delay
 }
 
 static void win_openvr_hide(void *data)
@@ -508,9 +452,7 @@ static void win_openvr_tick(void *data, float seconds)
 	}
 }
 
-static bool button_reset_callback(obs_properties_t *props, obs_property_t *p,
-				  void *data)
-{
+static bool button_reset_callback(obs_properties_t *props, obs_property_t *p, void *data) {
 	struct win_openvr *context = (win_openvr *)data;
 
 	if (GetTickCount64() - 2000 < context->lastCheckTick) {
