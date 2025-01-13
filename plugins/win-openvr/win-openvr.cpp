@@ -272,16 +272,16 @@ static void win_openvr_deinit(void *data)
 			vr::VR_Shutdown();
 			IsVRSystemInitialized = false;
 		}
-	}
 
-	if (context->texture) {
-		obs_enter_graphics();
-		gs_texture_destroy(context->texture);
-		obs_leave_graphics();
-		context->texture = NULL;
-	}
+		if (context->texture) {
+			obs_enter_graphics();
+			gs_texture_destroy(context->texture);
+			obs_leave_graphics();
+			context->texture = NULL;
+		}
 
-	context->initialized = false;
+		context->initialized = false;
+	}
 }
 
 static const char *win_openvr_get_name(void *unused)
@@ -323,7 +323,21 @@ static void win_openvr_update(void *data, obs_data_t *settings)
 	}
 
 	if (context->initialized) {
-		win_openvr_deinit(data);
+		{
+			std::lock_guard<std::mutex> lock(dx11_mutex);
+			if (IsVRSystemInitialized) {
+				IsVRSystemInitialized = false;
+			}
+
+			if (context->texture) {
+				obs_enter_graphics();
+				gs_texture_destroy(context->texture);
+				obs_leave_graphics();
+				context->texture = NULL;
+			}
+
+			context->initialized = false;
+		}
 		win_openvr_init(data);
 	}
 }
