@@ -165,54 +165,51 @@ static void win_openvr_init(void *data, bool forced = true)
 				if (scale_factor < 1.0)
 					scale_factor = 1.0;
 
-				unsigned int scaled_width = static_cast<unsigned int>(context->device_width / scale_factor);
-				unsigned int scaled_height = static_cast<unsigned int>(context->device_height / scale_factor);
-
-				if (!context->righteye) {
-					x = context->device_width - scaled_width;
-				}
-
-				context->width = scaled_width;
-				context->height = scaled_height;
-
-				// check for non-native AR, then proceed.
-				if (context->ar_crop) {
-					/// NEW CROP METHOD
-					double input_aspect_ratio = static_cast<double>(context->width) / context->height;
-					double active_aspect_ratio = context->active_aspect_ratio;
-
-					if (input_aspect_ratio > active_aspect_ratio) {
-						unsigned int cropped_width = static_cast<unsigned int>(context->height * active_aspect_ratio);
-						context->width = cropped_width;
-					} else if (input_aspect_ratio < active_aspect_ratio) {
-						unsigned int cropped_height = static_cast<unsigned int>(context->width / active_aspect_ratio);
-						context->height = cropped_height;
+					unsigned int scaled_width = static_cast<unsigned int>(context->device_width / scale_factor);
+					unsigned int scaled_height = static_cast<unsigned int>(context->device_height / scale_factor);
+	
+					int x_offset = context->x_offset;
+					int y_offset = context->y_offset;
+	
+					if (!context->righteye) {
+						x_offset = -x_offset;
+						x = context->device_width - scaled_width;
 					}
-					// END NEW CROP METHOD
-				}
-
-				int x_offset = context->x_offset;
-				int y_offset = context->y_offset;
-
-				if (!context->righteye) {
-					x_offset = -x_offset;
-				}
-
-				x += x_offset;
-				y += y_offset;
-
-				if (x < 0) x = 0;
-				if (y < 0) y = 0;
-				if (x + context->width > context->device_width) x = context->device_width - context->width;
-				if (y + context->height > context->device_height) y = context->device_height - context->height;
-
-				context->x = x;
-				context->y = y;
-
-				desc.Width = context->width;
-				desc.Height = context->height;
-				desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-				desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+	
+					x += x_offset;
+					y += y_offset;
+	
+					if (x < 0) x = 0;
+					if (y < 0) y = 0;
+					if (x + context->width > context->device_width) x = context->device_width - context->width;
+					if (y + context->height > context->device_height) y = context->device_height - context->height;
+	
+					context->x = x;
+					context->y = y;
+	
+					context->width = scaled_width;
+					context->height = scaled_height;
+	
+					// check for non-native AR, then proceed.
+					if (context->ar_crop) {
+						/// NEW CROP METHOD
+						double input_aspect_ratio = static_cast<double>(context->width) / context->height;
+						double active_aspect_ratio = context->active_aspect_ratio;
+	
+						if (input_aspect_ratio > active_aspect_ratio) {
+							unsigned int cropped_width = static_cast<unsigned int>(context->height * active_aspect_ratio);
+							context->width = cropped_width;
+						} else if (input_aspect_ratio < active_aspect_ratio) {
+							unsigned int cropped_height = static_cast<unsigned int>(context->width / active_aspect_ratio);
+							context->height = cropped_height;
+						}
+						// END NEW CROP METHOD
+					}
+	
+					desc.Width = context->width;
+					desc.Height = context->height;
+					desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+					desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
 				HRESULT hr = context->dev11->CreateTexture2D(&desc, NULL, &context->texCrop);
 				if (FAILED(hr)) {
