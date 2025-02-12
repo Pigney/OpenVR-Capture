@@ -16,10 +16,9 @@
 #include <mutex>
 
 std::mutex dx11_mutex;
-ID3D11Device* shared_device = nullptr;
-ID3D11DeviceContext* shared_context = nullptr;
 
 std::atomic<bool> init_inprog(false);
+std::atomic<bool> IsVRSystemInitialized(false);
 
 #include <algorithm>
 #include <vector>
@@ -59,6 +58,9 @@ struct win_openvr {
 	ID3D11Resource *tex;
 	ID3D11ShaderResourceView *mirrorSrv;
 
+	ID3D11Device *shared_device = nullptr;
+	ID3D11DeviceContext *shared_context = nullptr;
+
 	IDXGIResource *res;
 
 	ID3D11Texture2D *texCrop;
@@ -82,9 +84,6 @@ struct win_openvr {
 	bool active;
 };
 
-bool IsVRSystemInitialized = false;
-
-
 /// This is the messiest code i have written in my life, one day i will fix it but that day is not today.
 static void win_openvr_init(void *data, bool forced = true)
 {
@@ -103,8 +102,8 @@ static void win_openvr_init(void *data, bool forced = true)
 	std::thread([context, forced]() {
 		std::lock_guard<std::mutex> lock(dx11_mutex);
 
-		if (!shared_device) {
-			HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &shared_device, nullptr, &shared_context);
+		if (!context->shared_device) {
+			HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &context->shared_device, nullptr, &context->shared_context);
 			if (FAILED(hr)) {
 				warn("win_openvr_init: SHARED D3D11CreateDevice failed");
 				init_inprog = false;
@@ -113,8 +112,8 @@ static void win_openvr_init(void *data, bool forced = true)
 			}
 		}
 
-		context->dev11 = shared_device;
-		context->ctx11 = shared_context;
+		context->dev11 = context->shared_device;
+		context->ctx11 = context->shared_context;
 		context->dev11->AddRef();
 		context->ctx11->AddRef();
 
