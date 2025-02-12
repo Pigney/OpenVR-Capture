@@ -104,7 +104,7 @@ static void win_openvr_init(void *data, bool forced = true)
 		std::lock_guard<std::mutex> lock(dx11_mutex);
 
 		if (!shared_device) {
-			HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &shared_device, NULL, &shared_context);
+			HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &shared_device, nullptr, &shared_context);
 			if (FAILED(hr)) {
 				warn("win_openvr_init: SHARED D3D11CreateDevice failed");
 				init_inprog = false;
@@ -211,7 +211,7 @@ static void win_openvr_init(void *data, bool forced = true)
 					desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 					desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
-				HRESULT hr = context->dev11->CreateTexture2D(&desc, NULL, &context->texCrop);
+				HRESULT hr = context->dev11->CreateTexture2D(&desc, nullptr, &context->texCrop);
 				if (FAILED(hr)) {
 					warn("win_openvr_show: CreateTexture2D failed");
 					init_inprog = false;
@@ -229,7 +229,7 @@ static void win_openvr_init(void *data, bool forced = true)
 					return;
 				}
 
-				HANDLE handle = NULL;
+				HANDLE handle = nullptr;
 				hr = context->res->GetSharedHandle(&handle);
 				if (FAILED(hr)) {
 					warn("win_openvr_show: GetSharedHandle failed");
@@ -274,7 +274,7 @@ static void win_openvr_deinit(void *data)
 			obs_enter_graphics();
 			gs_texture_destroy(context->texture);
 			obs_leave_graphics();
-			context->texture = NULL;
+			context->texture = nullptr;
 		}
 
 		context->initialized = false;
@@ -330,7 +330,7 @@ static void win_openvr_update(void *data, obs_data_t *settings)
 				obs_enter_graphics();
 				gs_texture_destroy(context->texture);
 				obs_leave_graphics();
-				context->texture = NULL;
+				context->texture = nullptr;
 			}
 
 			context->initialized = false;
@@ -379,11 +379,11 @@ static void *win_openvr_create(obs_data_t *settings, obs_source_t *source)
 
 	context->initialized = false;
 
-	context->ctx11 = NULL;
-	context->dev11 = NULL;
-	context->tex = NULL;
-	context->texture = NULL;
-	context->texCrop = NULL;
+	context->ctx11 = nullptr;
+	context->dev11 = nullptr;
+	context->tex = nullptr;
+	context->texture = nullptr;
+	context->texCrop = nullptr;
 
 	context->width = context->height = 100;
 
