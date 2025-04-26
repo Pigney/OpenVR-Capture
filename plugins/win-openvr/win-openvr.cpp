@@ -52,6 +52,8 @@ struct win_openvr {
 	double active_aspect_ratio;
 	bool ar_crop;
 
+	uint32_t lastFrame;
+
 	gs_texture_t *texture;
 	ID3D11Device *dev11;
 	ID3D11DeviceContext *ctx11;
@@ -245,6 +247,7 @@ static void win_openvr_init(void *data, bool forced = true)
 			}
 		}
 		context->initialized = true;
+		context->lastFrame = 0;
 		init_inprog = false;
 	}).detach();
 }
@@ -390,17 +393,24 @@ static void win_openvr_render(void *data, gs_effect_t *effect)
 		return;
 	}
 
-	// This step is required even without cropping as the full res mirror texture is in sRGB space
-	D3D11_BOX poksi = {
-		context->x,
-		context->y,
-		0,
-		context->x + context->width,
-		context->y + context->height,
-		1,
-	};
-	context->ctx11->CopySubresourceRegion(context->texCrop, 0, 0, 0, 0, context->tex, 0, &poksi);
-	context->ctx11->Flush();
+	bool newFrame = false;
+	if (vr::VRCompositor()) {
+		vr::Compositor_FrameTiming frameTiming = {};
+		frameTiming.m_nSize = sizeof(vr::Compositor_FrameTiming);
+		if (vr::VRCompositor()->GetFrameTiming(&frameTiming, 0)) {
+			if (frameTiming.m_nFrameIndex != context->lastFrame) {
+				context->lastFrame = frameTiming.m_nFrameIndex;
+				newFrame = true;
+			}
+		}
+	}
+
+	if (newFrame) {
+		// This step is required even without cropping as the full res mirror texture is in sRGB space
+		D3D11_BOX poksi = {context->x, context->y, 0, context->x + context->width, context->y + context->height, 1};
+		context->ctx11->CopySubresourceRegion(context->texCrop, 0, 0, 0, 0, context->tex, 0, &poksi);
+		context->ctx11->Flush();
+	}
 
 	// Draw from OpenVR shared mirror texture
 	effect = obs_get_base_effect(OBS_EFFECT_OPAQUE);
