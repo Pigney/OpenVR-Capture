@@ -232,11 +232,11 @@ static void win_openvr_init(void *data, bool forced = true)
 				}
 				context->res->Release();
 
-				#ifdef _WIN64
+				// #ifdef _WIN64
 				uint32_t GShandle = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handle));
-				#else
-				uint32_t GShandle = static_cast<uint32_t>(handle);
-				#endif
+				// #else
+				// uint32_t GShandle = static_cast<uint32_t>(handle);
+				// #endif
 				destroy_obs_texture(&context->texture);
 				obs_enter_graphics();
 				context->texture = gs_texture_open_shared(GShandle);
