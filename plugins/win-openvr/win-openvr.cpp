@@ -393,23 +393,18 @@ static void win_openvr_render(void *data, gs_effect_t *effect)
 		return;
 	}
 
-	bool newFrame = false;
 	if (vr::VRCompositor()) {
 		vr::Compositor_FrameTiming frameTiming = {};
 		frameTiming.m_nSize = sizeof(vr::Compositor_FrameTiming);
 		if (vr::VRCompositor()->GetFrameTiming(&frameTiming, 0)) {
 			if (frameTiming.m_nFrameIndex != context->lastFrame) {
+				//info("win_openvr_render: gracefully rendered frame %u", frameTiming.m_nFrameIndex);
+				D3D11_BOX poksi = {context->x, context->y, 0, context->x + context->width, context->y + context->height, 1};
+				context->ctx11->CopySubresourceRegion(context->texCrop, 0, 0, 0, 0, context->tex, 0, &poksi);
+				context->ctx11->Flush();
 				context->lastFrame = frameTiming.m_nFrameIndex;
-				newFrame = true;
 			}
 		}
-	}
-
-	if (newFrame) {
-		// This step is required even without cropping as the full res mirror texture is in sRGB space
-		D3D11_BOX poksi = {context->x, context->y, 0, context->x + context->width, context->y + context->height, 1};
-		context->ctx11->CopySubresourceRegion(context->texCrop, 0, 0, 0, 0, context->tex, 0, &poksi);
-		context->ctx11->Flush();
 	}
 
 	// Draw from OpenVR shared mirror texture
