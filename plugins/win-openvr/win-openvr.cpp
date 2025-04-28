@@ -168,25 +168,10 @@ static void win_openvr_init(void *data, bool forced = true)
 
 				// Pan and zoom
 				int x = 0, y = 0;
+
 				double scale_factor = context->scale_factor < 1.0 ? 1.0 : context->scale_factor;
 				unsigned int scaled_width = static_cast<unsigned int>(context->device_width / scale_factor);
 				unsigned int scaled_height = static_cast<unsigned int>(context->device_height / scale_factor);
-
-				int x_offset = context->x_offset;
-				int y_offset = context->y_offset;
-				if (!context->righteye) {
-					x_offset = -x_offset;
-					x = context->device_width - scaled_width;
-				}
-				x += x_offset;
-				y += y_offset;
-
-				x = std::max(0, x);
-				y = std::max(0, y);
-				if (x + scaled_width > context->device_width) x = context->device_width - scaled_width;
-				if (y + scaled_height > context->device_height) y = context->device_height - scaled_height;
-				context->x = x;
-				context->y = y;
 				context->width = scaled_width;
 				context->height = scaled_height;
 
@@ -199,6 +184,23 @@ static void win_openvr_init(void *data, bool forced = true)
 						context->height = static_cast<unsigned int>(context->width / active_aspect_ratio);
 					}
 				}
+
+				int x_offset = context->x_offset;
+				int y_offset = context->y_offset;
+				if (!context->righteye) {
+					x_offset = -x_offset;
+					x = context->device_width - scaled_width;
+				}
+				x += x_offset;
+				y += y_offset;
+				if (x + context->width > context->device_width) x = context->device_width - context->width;
+				if (y + context->height > context->device_height) y = context->device_height - context->height;
+
+				x = std::max(0, x);
+				y = std::max(0, y);
+				context->x = x;
+				context->y = y;
+
 				desc.Width = context->width;
 				desc.Height = context->height;
 				desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
