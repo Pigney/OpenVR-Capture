@@ -67,8 +67,6 @@ struct win_openvr {
 
 	ID3D11Texture2D *texCrop;
 
-	ULONGLONG lastCheckTick;
-
 	// Set in win_openvr_init, 0 until then.
 	unsigned int device_width;
 	unsigned int device_height;
@@ -446,19 +444,6 @@ static void win_openvr_tick(void *data, float seconds)
 	}
 }
 
-static bool button_reset_callback(obs_properties_t *props, obs_property_t *p, void *data) {
-	struct win_openvr *context = (win_openvr *)data;
-
-	if (GetTickCount64() - 2000 < context->lastCheckTick) {
-		return false;
-	}
-
-	context->lastCheckTick = GetTickCount64();
-	context->initialized = false;
-	win_openvr_deinit(data);
-	return false;
-}
-
 static bool ar_modd(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
 	double aspect_ratio = obs_data_get_double(settings, "aspect_ratio");
@@ -501,8 +486,6 @@ static obs_properties_t *win_openvr_properties(void *data)
 	p = obs_properties_add_float_slider(props, "scale_factor", obs_module_text("Zoom"), 1.0, 5.0, 0.01);
 	p = obs_properties_add_int(props, "x_offset", obs_module_text("Horizontal Offset"), -10000, 10000, 1);
 	p = obs_properties_add_int(props, "y_offset", obs_module_text("Vertical Offset"), -10000, 10000, 1);
-
-	p = obs_properties_add_button(props, "resetsteamvr", "Refresh", button_reset_callback);
 
 	obs_data_t *settings = obs_source_get_settings(context->source);
 	ar_modd(props, NULL, settings);
