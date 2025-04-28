@@ -4,11 +4,9 @@ This plugin allows capturing directly from OpenVR/SteamVR in full resolution.
 
 A fork of OBS-OpenVR-Input-Plugin, originally made by Keijo "Kegetys" Ruotsalainen
 
-![obs64_u5mWzFK5w5](https://github.com/user-attachments/assets/28a32da3-f7de-4bca-8f09-78b7b9cebd60)
+![obs64_4E9advFPF8](https://github.com/user-attachments/assets/98e52da2-f58d-4a63-a975-b07704e4a4e9)
 
 
-### Q. How does this affect performance?
-A. This has virtually no effect on performance.
 ### Q. What benefits does this have over the original?
 A.
 - Crop function replaced with realtime Aspect Ratio dropdown with Zoom and Offsets.
