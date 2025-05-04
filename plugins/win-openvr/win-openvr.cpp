@@ -14,14 +14,17 @@
 #include <atomic>
 #include <stdint.h>
 #include <mutex>
+#include <algorithm>
+#include <vector>
+#include <chrono>
 
 std::mutex dx11_mutex;
 
 std::atomic<bool> init_inprog(false);
 std::atomic<bool> IsVRSystemInitialized(false);
 
-#include <algorithm>
-#include <vector>
+static std::chrono::steady_clock::time_point last_init_time = std::chrono::steady_clock::now();
+static constexpr std::chrono::milliseconds retry_delay(16); // init at 60hz
 
 #pragma comment(lib, "d3d11.lib")
 
@@ -59,9 +62,6 @@ struct win_openvr {
 	ID3D11DeviceContext *ctx11;
 	ID3D11Resource *tex;
 	ID3D11ShaderResourceView *mirrorSrv;
-
-	ID3D11Device *shared_device = nullptr;
-	ID3D11DeviceContext *shared_context = nullptr;
 
 	IDXGIResource *res;
 
@@ -102,6 +102,9 @@ static void destroy_obs_texture(gs_texture_t **texture) {
 	}
 }
 
+ID3D11Device *shared_device = nullptr;
+ID3D11DeviceContext *shared_context = nullptr;
+
 /// This is the messiest code i have written in my life, one day i will fix it but that day is not today.
 static void win_openvr_init(void *data, bool forced = true)
 {
@@ -110,27 +113,35 @@ static void win_openvr_init(void *data, bool forced = true)
 	if (context->initialized || init_inprog)
 		return;
 
-	if (!vr::VR_IsRuntimeInstalled()) {
-		warn("win_openvr_show: SteamVR Runtime inactive!");
+	auto now = std::chrono::steady_clock::now();
+	if (now - last_init_time < retry_delay) {
 		return;
 	}
+	last_init_time = now;
 
-	init_inprog = true;
-
-	std::thread([context, forced]() {
+	{
 		std::lock_guard<std::mutex> lock(dx11_mutex);
-		if (!context->shared_device) {
-			HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &context->shared_device, nullptr, &context->shared_context);
+		if (!shared_device) {
+			HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &shared_device, nullptr, &shared_context);
 			if (FAILED(hr)) {
 				warn("win_openvr_init: SHARED D3D11CreateDevice failed");
-				init_inprog = false;
-				vr::VR_Shutdown();
 				return;
 			}
 		}
+	}
 
-		context->dev11 = context->shared_device;
-		context->ctx11 = context->shared_context;
+	// if (!vr::VR_IsRuntimeInstalled()) {
+	// 	warn("win_openvr_show: SteamVR Runtime inactive!");
+	// 	return;
+	// }
+
+	init_inprog = true;
+	
+	std::thread([context, forced]() {
+		std::lock_guard<std::mutex> lock(dx11_mutex);
+
+		context->dev11 = shared_device;
+		context->ctx11 = shared_context;
 		context->dev11->AddRef();
 		context->ctx11->AddRef();
 
@@ -140,6 +151,10 @@ static void win_openvr_init(void *data, bool forced = true)
 			warn("win_openvr_init: OpenVR initialization failed!");
 			init_inprog = false;
 			vr::VR_Shutdown();
+			safe_release((IUnknown**)&context->dev11);
+			safe_release((IUnknown**)&context->ctx11);
+			context->mirrorSrv = nullptr;
+			context->tex = nullptr;
 			return;
 		}
 
@@ -261,6 +276,8 @@ static void win_openvr_deinit(void *data)
 		vr::VR_Shutdown();
 		IsVRSystemInitialized = false;
 	}
+	context->mirrorSrv = nullptr;
+	context->tex = nullptr;
 	destroy_obs_texture(&context->texture);
 	context->initialized = false;
 }
@@ -363,6 +380,7 @@ static void *win_openvr_create(obs_data_t *settings, obs_source_t *source)
 	context->tex = nullptr;
 	context->texture = nullptr;
 	context->texCrop = nullptr;
+	context->mirrorSrv = nullptr;
 
 	context->width = context->height = 100;
 
