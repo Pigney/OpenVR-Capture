@@ -24,7 +24,10 @@ std::atomic<bool> init_inprog(false);
 std::atomic<bool> IsVRSystemInitialized(false);
 
 static std::chrono::steady_clock::time_point last_init_time = std::chrono::steady_clock::now();
-static constexpr std::chrono::milliseconds retry_delay(16); // init at 60hz
+static constexpr std::chrono::microseconds retry_delay(555); // update at 180hz
+
+static std::chrono::steady_clock::time_point last_init_time1 = std::chrono::steady_clock::now();
+static constexpr std::chrono::seconds retry_delay1(1); // init at 1hz
 
 #pragma comment(lib, "d3d11.lib")
 
@@ -119,44 +122,31 @@ static void win_openvr_init(void *data, bool forced = true)
 	}
 	last_init_time = now;
 
-	{
-		std::lock_guard<std::mutex> lock(dx11_mutex);
-		if (!shared_device) {
-			HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &shared_device, nullptr, &shared_context);
-			if (FAILED(hr)) {
-				warn("win_openvr_init: SHARED D3D11CreateDevice failed");
-				return;
-			}
-		}
-	}
-
 	// if (!vr::VR_IsRuntimeInstalled()) {
 	// 	warn("win_openvr_show: SteamVR Runtime inactive!");
 	// 	return;
 	// }
+	
+	if (!shared_device) {
+		HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &shared_device, nullptr, &shared_context);
+		if (FAILED(hr)) {
+			warn("win_openvr_init: SHARED D3D11CreateDevice failed");
+			return;
+		}
+	}
 
 	init_inprog = true;
 	
 	std::thread([context, forced]() {
 		std::lock_guard<std::mutex> lock(dx11_mutex);
 
+		safe_release((IUnknown**)&context->texCrop);
+		safe_release((IUnknown**)&context->tex);
+
 		context->dev11 = shared_device;
 		context->ctx11 = shared_context;
 		context->dev11->AddRef();
 		context->ctx11->AddRef();
-
-		vr::EVRInitError err = vr::VRInitError_None;
-		vr::VR_Init(&err, vr::VRApplication_Background);
-		if (err != vr::VRInitError_None) {
-			warn("win_openvr_init: OpenVR initialization failed!");
-			init_inprog = false;
-			vr::VR_Shutdown();
-			safe_release((IUnknown**)&context->dev11);
-			safe_release((IUnknown**)&context->ctx11);
-			context->mirrorSrv = nullptr;
-			context->tex = nullptr;
-			return;
-		}
 
 		IsVRSystemInitialized = true;
 
@@ -276,10 +266,37 @@ static void win_openvr_deinit(void *data)
 		vr::VR_Shutdown();
 		IsVRSystemInitialized = false;
 	}
-	context->mirrorSrv = nullptr;
-	context->tex = nullptr;
+
 	destroy_obs_texture(&context->texture);
+	safe_release((IUnknown**)&context->texCrop);
+	safe_release((IUnknown**)&context->tex);
+	safe_release((IUnknown**)&context->mirrorSrv);
+	safe_release((IUnknown**)&context->ctx11);
+	safe_release((IUnknown**)&context->dev11);
+
 	context->initialized = false;
+}
+
+static void win_openvr_init1(void *data, bool forced = true) {
+	win_openvr *context = (win_openvr *)data;
+
+	if (context->initialized || init_inprog)
+		return;
+
+	auto now = std::chrono::steady_clock::now();
+	if (now - last_init_time1 < retry_delay1) {
+		return;
+	}
+	last_init_time1 = now;
+
+	vr::EVRInitError err = vr::VRInitError_None;
+	vr::VR_Init(&err, vr::VRApplication_Background);
+	if (err != vr::VRInitError_None) {
+		warn("win_openvr_init: OpenVR initialization failed!");
+		vr::VR_Shutdown();
+		return;
+	}
+	win_openvr_init(data, forced);
 }
 
 static const char *win_openvr_get_name(void *unused)
@@ -291,6 +308,7 @@ static const char *win_openvr_get_name(void *unused)
 static void win_openvr_update(void *data, obs_data_t *settings)
 {
 	struct win_openvr *context = (win_openvr *)data;
+
 	context->righteye = obs_data_get_bool(settings, "righteye");
 
 	// zoom/scaling
@@ -360,7 +378,7 @@ static uint32_t win_openvr_getheight(void *data)
 
 static void win_openvr_show(void *data)
 {
-	win_openvr_init(data, true); // When showing do forced init without delay
+	win_openvr_init1(data, true); // When showing do forced init without delay
 }
 
 static void win_openvr_hide(void *data)
@@ -384,7 +402,7 @@ static void *win_openvr_create(obs_data_t *settings, obs_source_t *source)
 
 	context->width = context->height = 100;
 
-	context->active_aspect_ratio = 4.0 / 3.0;
+	context->active_aspect_ratio = 16.0 / 9.0;
 
 	win_openvr_update(context, settings);
 	return context;
@@ -402,13 +420,13 @@ static void win_openvr_render(void *data, gs_effect_t *effect)
 {
 	struct win_openvr *context = (win_openvr *)data;
 
-	if (context->active && !context->initialized) {
-		// Active & want to render but not initialized - attempt to init
-		win_openvr_init(data);
+	if (!context->active) {
+		return;
 	}
 
-	if (!context->texture || !context->active) {
-		return;
+	if (context->active && !context->initialized) {
+		// Active & want to render but not initialized - attempt to init
+		win_openvr_init1(data);
 	}
 
 	if (vr::VRCompositor()) {
@@ -457,7 +475,7 @@ static void win_openvr_tick(void *data, float seconds)
 			}
 		} else if (context->active) {
 			context->initialized = false;
-			win_openvr_init(data);
+			win_openvr_init1(data);
 		}
 	}
 }
