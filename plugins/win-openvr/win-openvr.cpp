@@ -126,12 +126,14 @@ static void win_openvr_init(void *data, bool forced = true)
 	// 	warn("win_openvr_show: SteamVR Runtime inactive!");
 	// 	return;
 	// }
-	
-	if (!shared_device) {
-		HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &shared_device, nullptr, &shared_context);
-		if (FAILED(hr)) {
-			warn("win_openvr_init: SHARED D3D11CreateDevice failed");
-			return;
+	{
+		std::lock_guard<std::mutex> lock(dx11_mutex);
+		if (!shared_device) {
+			HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &shared_device, nullptr, &shared_context);
+			if (FAILED(hr)) {
+				warn("win_openvr_init: SHARED D3D11CreateDevice failed");
+				return;
+			}
 		}
 	}
 
