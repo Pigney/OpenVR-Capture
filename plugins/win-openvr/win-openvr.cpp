@@ -10,7 +10,6 @@
 #include <util/dstr.h>
 #include <sys/stat.h>
 #include <d3d11.h>
-#include <thread>
 #include <atomic>
 #include <stdint.h>
 #include <mutex>
@@ -25,9 +24,6 @@ std::atomic<bool> IsVRSystemInitialized(false);
 
 static std::chrono::steady_clock::time_point last_init_time = std::chrono::steady_clock::now();
 static constexpr std::chrono::microseconds retry_delay(555); // update at 180hz
-
-static std::chrono::steady_clock::time_point last_init_time1 = std::chrono::steady_clock::now();
-static constexpr std::chrono::seconds retry_delay1(1); // init at 1hz
 
 #pragma comment(lib, "d3d11.lib")
 
@@ -122,10 +118,14 @@ static void win_openvr_init(void *data, bool forced = true)
 	}
 	last_init_time = now;
 
-	// if (!vr::VR_IsRuntimeInstalled()) {
-	// 	warn("win_openvr_show: SteamVR Runtime inactive!");
-	// 	return;
-	// }
+	vr::EVRInitError err = vr::VRInitError_None;
+	vr::VR_Init(&err, vr::VRApplication_Background);
+	if (err != vr::VRInitError_None) {
+		warn("win_openvr_init: OpenVR initialization failed!");
+		vr::VR_Shutdown();
+		return;
+	}
+	
 	{
 		std::lock_guard<std::mutex> lock(dx11_mutex);
 		if (!shared_device) {
@@ -139,7 +139,7 @@ static void win_openvr_init(void *data, bool forced = true)
 
 	init_inprog = true;
 	
-	std::thread([context, forced]() {
+	{
 		std::lock_guard<std::mutex> lock(dx11_mutex);
 
 		safe_release((IUnknown**)&context->texCrop);
@@ -256,7 +256,7 @@ static void win_openvr_init(void *data, bool forced = true)
 		context->initialized = true;
 		context->lastFrame = 0;
 		init_inprog = false;
-	}).detach();
+	}
 }
 
 static void win_openvr_deinit(void *data)
@@ -277,28 +277,6 @@ static void win_openvr_deinit(void *data)
 	safe_release((IUnknown**)&context->dev11);
 
 	context->initialized = false;
-}
-
-static void win_openvr_init1(void *data, bool forced = true) {
-	win_openvr *context = (win_openvr *)data;
-
-	if (context->initialized || init_inprog)
-		return;
-
-	auto now = std::chrono::steady_clock::now();
-	if (now - last_init_time1 < retry_delay1) {
-		return;
-	}
-	last_init_time1 = now;
-
-	vr::EVRInitError err = vr::VRInitError_None;
-	vr::VR_Init(&err, vr::VRApplication_Background);
-	if (err != vr::VRInitError_None) {
-		warn("win_openvr_init: OpenVR initialization failed!");
-		vr::VR_Shutdown();
-		return;
-	}
-	win_openvr_init(data, forced);
 }
 
 static const char *win_openvr_get_name(void *unused)
@@ -380,7 +358,7 @@ static uint32_t win_openvr_getheight(void *data)
 
 static void win_openvr_show(void *data)
 {
-	win_openvr_init1(data, true); // When showing do forced init without delay
+	win_openvr_init(data, true); // When showing do forced init without delay
 }
 
 static void win_openvr_hide(void *data)
@@ -428,7 +406,7 @@ static void win_openvr_render(void *data, gs_effect_t *effect)
 
 	if (context->active && !context->initialized) {
 		// Active & want to render but not initialized - attempt to init
-		win_openvr_init1(data);
+		win_openvr_init(data);
 	}
 
 	if (vr::VRCompositor()) {
@@ -477,7 +455,7 @@ static void win_openvr_tick(void *data, float seconds)
 			}
 		} else if (context->active) {
 			context->initialized = false;
-			win_openvr_init1(data);
+			win_openvr_init(data);
 		}
 	}
 }
