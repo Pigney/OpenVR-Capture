@@ -20,6 +20,8 @@ static bool IsVRSystemInitialized = false;
 
 static std::chrono::steady_clock::time_point last_init_time = std::chrono::steady_clock::now();
 static constexpr std::chrono::duration<double, std::milli> retry_delay(1000.0 / 120.0); // update at ~120Hz
+static std::chrono::steady_clock::time_point last_init_timeBUFFER = std::chrono::steady_clock::now();
+static constexpr std::chrono::duration<double, std::milli> retry_delayBUFFER(1000.0 / 2.0); // init at 2Hz
 
 #pragma comment(lib, "d3d11.lib")
 
@@ -244,6 +246,21 @@ static void win_openvr_init(void *data, bool forced = true)
 	init_inprog = false;
 }
 
+static void win_openvr_init1(void *data, bool forced = true) {
+	win_openvr *context = (win_openvr *)data;
+
+	if (context->initialized || init_inprog)
+		return;
+
+	auto now = std::chrono::steady_clock::now();
+	if (now - last_init_timeBUFFER < retry_delayBUFFER) {
+		return;
+	}
+	last_init_timeBUFFER = now;
+
+	win_openvr_init(data, forced);
+}
+
 static void win_openvr_deinit(void *data)
 {
 	win_openvr *context = (win_openvr *)data;
@@ -328,7 +345,7 @@ static uint32_t win_openvr_getheight(void *data)
 
 static void win_openvr_show(void *data)
 {
-	win_openvr_init(data, true); // When showing do forced init without delay
+	win_openvr_init1(data, true); // When showing do forced init without delay
 }
 
 static void win_openvr_hide(void *data)
@@ -378,7 +395,7 @@ static void win_openvr_render(void *data, gs_effect_t *effect)
 
 	if (!context->initialized) {
 		// Active & want to render but not initialized - attempt to init
-		win_openvr_init(data);
+		win_openvr_init1(data);
 	}
 
 	if (vr::VRCompositor()) {
@@ -424,7 +441,7 @@ static void win_openvr_tick(void *data, float seconds)
 	}
 
 	if (!context->initialized && context->active) {
-		win_openvr_init(data);
+		win_openvr_init1(data);
 	}
 }
 
