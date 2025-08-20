@@ -428,7 +428,7 @@ static void win_openvr_tick(void *data, float seconds)
 
 	struct win_openvr *context = (win_openvr *)data;
 
-	context->active = obs_source_active(context->source);
+	context->active = obs_source_showing(context->source);
 
 	vr::VREvent_t e;
 	if (vr::VRSystem() != NULL) {
