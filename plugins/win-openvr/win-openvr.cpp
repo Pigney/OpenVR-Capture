@@ -14,23 +14,21 @@
 #include <algorithm>
 #include <vector>
 #include <chrono>
+#include "headers/openvr.h"
+
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "lib/win64/openvr_api.lib")
 
 static bool init_inprog = false;
 static bool IsVRSystemInitialized = false;
 
-static std::chrono::steady_clock::time_point last_init_time = std::chrono::steady_clock::now();
-static constexpr std::chrono::duration<double, std::milli> retry_delay(1000.0 / 120.0); // update at ~120Hz
-static std::chrono::steady_clock::time_point last_init_timeBUFFER = std::chrono::steady_clock::now();
-static constexpr std::chrono::duration<double, std::milli> retry_delayBUFFER(1000.0 / 2.0); // init at 2Hz
-
-#pragma comment(lib, "d3d11.lib")
-
-#include "headers/openvr.h"
-#pragma comment(lib, "lib/win64/openvr_api.lib")
+std::chrono::steady_clock::time_point last_init_time = std::chrono::steady_clock::now();
+std::chrono::steady_clock::time_point last_init_timeBUFFER = std::chrono::steady_clock::now();
+static constexpr std::chrono::milliseconds retry_delay{8}; // update at ~120Hz
+static constexpr std::chrono::milliseconds retry_delayBUFFER{500}; // init at 2Hz
 
 #define blog(log_level, message, ...) \
 	blog(log_level, "[win_openvr] " message, ##__VA_ARGS__)
-
 #define debug(message, ...)                                                    \
 	blog(LOG_DEBUG, "[%s] " message, obs_source_get_name(context->source), \
 	     ##__VA_ARGS__)
@@ -270,8 +268,8 @@ static void win_openvr_deinit(void *data)
 	if (context->tex) safe_release((IUnknown**)&context->tex);
 	if (context->mirrorSrv) safe_release((IUnknown**)&context->mirrorSrv);
 	if (context->res) safe_release((IUnknown**)&context->res);
-	if (context->ctx11) safe_release((IUnknown**)&context->ctx11);
-	if (context->dev11) safe_release((IUnknown**)&context->dev11);
+//	if (context->ctx11) safe_release((IUnknown**)&context->ctx11);
+//	if (context->dev11) safe_release((IUnknown**)&context->dev11);
 
 	vr::VR_Shutdown();
 
@@ -360,8 +358,8 @@ static void *win_openvr_create(obs_data_t *settings, obs_source_t *source)
 
 	context->initialized = false;
 
-	context->ctx11 = nullptr;
-	context->dev11 = nullptr;
+//	context->ctx11 = nullptr;
+//	context->dev11 = nullptr;
 	context->tex = nullptr;
 	context->texture = nullptr;
 	context->texCrop = nullptr;
@@ -380,8 +378,8 @@ static void win_openvr_destroy(void *data)
 	struct win_openvr *context = (win_openvr *)data;
 
 	win_openvr_deinit(data);
-	safe_release((IUnknown**)&shared_device);
-	safe_release((IUnknown**)&shared_context);
+//	safe_release((IUnknown**)&shared_device);
+//	safe_release((IUnknown**)&shared_context);
 	bfree(context);
 }
 
