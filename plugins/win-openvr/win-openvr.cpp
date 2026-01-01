@@ -14,7 +14,9 @@
 #include <algorithm>
 #include <vector>
 #include <chrono>
+#include <wrl/client.h>
 #include "headers/openvr.h"
+using Microsoft::WRL::ComPtr;
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "lib/win64/openvr_api.lib")
@@ -49,14 +51,16 @@ struct win_openvr {
 	uint32_t lastFrame;
 
 	gs_texture_t *texture;
-	ID3D11Device *dev11;
-	ID3D11DeviceContext *ctx11;
-	ID3D11Resource *tex;
-	ID3D11ShaderResourceView *mirrorSrv;
+	//ComPtr<ID3D11Device> dev11;
+	//ComPtr<ID3D11DeviceContext> ctx11;
+	ComPtr<ID3D11Resource> tex;
+	ComPtr<ID3D11ShaderResourceView> mirrorSrv;
+	ComPtr<ID3D11Device> shared_device = nullptr;
+	ComPtr<ID3D11DeviceContext> shared_context = nullptr;
 
-	IDXGIResource *res;
+	ComPtr<IDXGIResource> res;
 
-	ID3D11Texture2D *texCrop;
+	ComPtr<ID3D11Texture2D> texCrop;
 
 	// Set in win_openvr_init, 0 until then.
 	unsigned int device_width;
@@ -75,14 +79,6 @@ struct win_openvr {
 	bool active;
 };
 
-// Helper to safely release COM objects
-static void safe_release(IUnknown **theobject) {
-	if (theobject && *theobject) {
-		(*theobject)->Release();
-		*theobject = nullptr;
-	}
-}
-
 // Helper to destroy OBS texture
 static void destroy_obs_texture(gs_texture_t **texture) {
 	if (texture && *texture) {
@@ -92,9 +88,6 @@ static void destroy_obs_texture(gs_texture_t **texture) {
 		*texture = nullptr;
 	}
 }
-
-ID3D11Device *shared_device = nullptr;
-ID3D11DeviceContext *shared_context = nullptr;
 
 /// This is the messiest code i have written in my life, one day i will fix it but that day is not today.
 static void win_openvr_init(void *data, bool forced = true)
@@ -121,8 +114,8 @@ static void win_openvr_init(void *data, bool forced = true)
 		return;
 	}
 
-	if (!shared_device) {
-		HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &shared_device, nullptr, &shared_context);
+	if (!context->shared_device.Get()) {
+		HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, context->shared_device.GetAddressOf(), nullptr, context->shared_context.GetAddressOf());
 		if (FAILED(hr)) {
 			warn("win_openvr_init: SHARED D3D11CreateDevice failed");
 			init_inprog = false;
@@ -131,13 +124,8 @@ static void win_openvr_init(void *data, bool forced = true)
 		}
 	}
 
-	safe_release((IUnknown**)&context->texCrop);
-	safe_release((IUnknown**)&context->tex);
-
-	context->dev11 = shared_device;
-	context->ctx11 = shared_context;
-	context->dev11->AddRef();
-	context->ctx11->AddRef();
+	context->texCrop.Reset();
+	context->tex.Reset();
 
 	IsVRSystemInitialized = true;
 
@@ -148,107 +136,110 @@ static void win_openvr_init(void *data, bool forced = true)
 		return;
 	}
 
-	vr::EVRCompositorError composError = vr::VRCompositor()->GetMirrorTextureD3D11(context->righteye ? vr::Eye_Right : vr::Eye_Left, context->dev11, (void **)&context->mirrorSrv);
+	vr::EVRCompositorError composError = vr::VRCompositor()->GetMirrorTextureD3D11(context->righteye ? vr::Eye_Right : vr::Eye_Left, context->shared_device.Get(), reinterpret_cast<void**>(context->mirrorSrv.GetAddressOf()));
 
-	context->mirrorSrv->GetResource(&context->tex);
-	if (context->tex) {
-		D3D11_TEXTURE2D_DESC desc = {};
-		ID3D11Texture2D *tex2D = nullptr;
-		context->tex->QueryInterface<ID3D11Texture2D>(&tex2D);
-		if (tex2D) {
-			tex2D->GetDesc(&desc);
-			context->device_width = desc.Width;
-			context->device_height = desc.Height;
+	if (context->mirrorSrv) {
+		context->mirrorSrv->GetResource(context->tex.GetAddressOf());
+		if (context->tex) {
+			D3D11_TEXTURE2D_DESC desc = {};
+			ComPtr<ID3D11Texture2D> tex2D = nullptr;
+			context->tex->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(tex2D.GetAddressOf()));
+			if (tex2D) {
+				tex2D->GetDesc(&desc);
+				context->device_width = desc.Width;
+				context->device_height = desc.Height;
 
-			// Pan and zoom
-			int x = 0, y = 0;
+				// Pan and zoom
+				int x = 0, y = 0;
 
-			double scale_factor = context->scale_factor < 1.0 ? 1.0 : context->scale_factor;
-			unsigned int scaled_width = static_cast<unsigned int>(context->device_width / scale_factor);
-			unsigned int scaled_height = static_cast<unsigned int>(context->device_height / scale_factor);
-			context->width = scaled_width;
-			context->height = scaled_height;
+				double scale_factor = context->scale_factor < 1.0 ? 1.0 : context->scale_factor;
+				unsigned int scaled_width = static_cast<unsigned int>(context->device_width / scale_factor);
+				unsigned int scaled_height = static_cast<unsigned int>(context->device_height / scale_factor);
+				context->width = scaled_width;
+				context->height = scaled_height;
 
-			if (context->ar_crop) {
-				double input_aspect_ratio = static_cast<double>(context->width) / context->height;
-				double active_aspect_ratio = context->active_aspect_ratio;
-				if (input_aspect_ratio > active_aspect_ratio) {
-					context->width = static_cast<unsigned int>(context->height * active_aspect_ratio);
-				} else if (input_aspect_ratio < active_aspect_ratio) {
-					context->height = static_cast<unsigned int>(context->width / active_aspect_ratio);
+				if (context->ar_crop) {
+					double input_aspect_ratio = static_cast<double>(context->width) / context->height;
+					double active_aspect_ratio = context->active_aspect_ratio;
+					if (input_aspect_ratio > active_aspect_ratio) {
+						context->width = static_cast<unsigned int>(context->height * active_aspect_ratio);
+					} else if (input_aspect_ratio < active_aspect_ratio) {
+						context->height = static_cast<unsigned int>(context->width / active_aspect_ratio);
+					}
 				}
+
+				int x_offset = context->x_offset;
+				int y_offset = context->y_offset;
+				if (!context->righteye) {
+					x_offset = -x_offset;
+					x = context->device_width - scaled_width;
+				}
+				x += x_offset;
+				y += y_offset;
+				if (x + context->width > context->device_width) x = context->device_width - context->width;
+				if (y + context->height > context->device_height) y = context->device_height - context->height;
+
+				x = std::max(0, x);
+				y = std::max(0, y);
+				context->x = x;
+				context->y = y;
+
+				desc.Width = context->width;
+				desc.Height = context->height;
+				desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+				desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+
+				HRESULT hr = context->shared_device->CreateTexture2D(&desc, nullptr, context->texCrop.GetAddressOf());
+				if (FAILED(hr)) {
+					warn("win_openvr_show: CreateTexture2D failed");
+					init_inprog = false;
+					vr::VR_Shutdown();
+					tex2D.Reset();
+					return;
+				}
+
+				HRESULT hrRes = context->texCrop->QueryInterface(__uuidof(IDXGIResource), reinterpret_cast<void**>(context->res.GetAddressOf()));
+				if (FAILED(hrRes)) {
+					warn("win_openvr_show: QueryInterface failed");
+					init_inprog = false;
+					vr::VR_Shutdown();
+					tex2D.Reset();
+					context->texCrop.Reset();
+					return;
+				}
+				HANDLE handle = nullptr;
+				HRESULT hrHandle = context->res->GetSharedHandle(&handle);
+				if (FAILED(hrHandle)) {
+					warn("win_openvr_show: GetSharedHandle failed");
+					init_inprog = false;
+					vr::VR_Shutdown();
+					context->res.Reset();
+					tex2D.Reset();
+					context->texCrop.Reset();
+					return;
+				}
+				context->res.Reset();
+
+				uint32_t GShandle = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handle));
+				destroy_obs_texture(&context->texture);
+				obs_enter_graphics();
+				context->texture = gs_texture_open_shared(GShandle);
+				obs_leave_graphics();
+				tex2D.Reset();
 			}
-
-			int x_offset = context->x_offset;
-			int y_offset = context->y_offset;
-			if (!context->righteye) {
-				x_offset = -x_offset;
-				x = context->device_width - scaled_width;
-			}
-			x += x_offset;
-			y += y_offset;
-			if (x + context->width > context->device_width) x = context->device_width - context->width;
-			if (y + context->height > context->device_height) y = context->device_height - context->height;
-
-			x = std::max(0, x);
-			y = std::max(0, y);
-			context->x = x;
-			context->y = y;
-
-			desc.Width = context->width;
-			desc.Height = context->height;
-			desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-			desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-
-			HRESULT hr = context->dev11->CreateTexture2D(&desc, nullptr, &context->texCrop);
-			if (FAILED(hr)) {
-				warn("win_openvr_show: CreateTexture2D failed");
-				init_inprog = false;
-				vr::VR_Shutdown();
-				safe_release((IUnknown**)&tex2D);
-				return;
-			}
-
-			HRESULT hrRes = context->texCrop->QueryInterface(__uuidof(IDXGIResource), (void **)&context->res);
-			if (FAILED(hrRes)) {
-				warn("win_openvr_show: QueryInterface failed");
-				init_inprog = false;
-				vr::VR_Shutdown();
-				safe_release((IUnknown**)&tex2D);
-				safe_release((IUnknown**)&context->texCrop);
-				return;
-			}
-			HANDLE handle = nullptr;
-			HRESULT hrHandle = context->res->GetSharedHandle(&handle);
-			if (FAILED(hrHandle)) {
-				warn("win_openvr_show: GetSharedHandle failed");
-				init_inprog = false;
-				vr::VR_Shutdown();
-				safe_release((IUnknown**)&context->res);
-				safe_release((IUnknown**)&tex2D);
-				safe_release((IUnknown**)&context->texCrop);
-				return;
-			}
-			safe_release((IUnknown**)&context->res);
-
-			uint32_t GShandle = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handle));
-			destroy_obs_texture(&context->texture);
-			obs_enter_graphics();
-			context->texture = gs_texture_open_shared(GShandle);
-			obs_leave_graphics();
-			safe_release((IUnknown**)&tex2D);
 		}
+		context->initialized = true;
+		context->lastFrame = 0;
+		init_inprog = false;
 	}
-	context->initialized = true;
-	context->lastFrame = 0;
-	init_inprog = false;
 }
 
 static void win_openvr_init1(void *data, bool forced = true) {
 	win_openvr *context = (win_openvr *)data;
 
-	if (context->initialized || init_inprog)
+	if (context->initialized || init_inprog) {
 		return;
+	}
 
 	auto now = std::chrono::steady_clock::now();
 	if (now - last_init_timeBUFFER < retry_delayBUFFER) {
@@ -264,12 +255,12 @@ static void win_openvr_deinit(void *data)
 	win_openvr *context = (win_openvr *)data;
 
 	if (context->texture) destroy_obs_texture(&context->texture);
-	if (context->texCrop) safe_release((IUnknown**)&context->texCrop);
-	if (context->tex) safe_release((IUnknown**)&context->tex);
-	if (context->mirrorSrv) safe_release((IUnknown**)&context->mirrorSrv);
-	if (context->res) safe_release((IUnknown**)&context->res);
-//	if (context->ctx11) safe_release((IUnknown**)&context->ctx11);
-//	if (context->dev11) safe_release((IUnknown**)&context->dev11);
+	if (context->texCrop) context->texCrop.Reset();
+	if (context->tex) context->tex.Reset();
+	if (context->mirrorSrv) context->mirrorSrv.Reset();
+	if (context->res) context->res.Reset();
+	if (context->shared_device) context->shared_device.Reset();
+	if (context->shared_context) context->shared_context.Reset();
 
 	vr::VR_Shutdown();
 
@@ -358,8 +349,8 @@ static void *win_openvr_create(obs_data_t *settings, obs_source_t *source)
 
 	context->initialized = false;
 
-//	context->ctx11 = nullptr;
-//	context->dev11 = nullptr;
+	context->shared_device = nullptr;
+	context->shared_context = nullptr;
 	context->tex = nullptr;
 	context->texture = nullptr;
 	context->texCrop = nullptr;
@@ -378,8 +369,6 @@ static void win_openvr_destroy(void *data)
 	struct win_openvr *context = (win_openvr *)data;
 
 	win_openvr_deinit(data);
-//	safe_release((IUnknown**)&shared_device);
-//	safe_release((IUnknown**)&shared_context);
 	bfree(context);
 }
 
@@ -403,8 +392,8 @@ static void win_openvr_render(void *data, gs_effect_t *effect)
 			if (frameTiming.m_nFrameIndex != context->lastFrame) {
 				if (context->texCrop && context->tex) {
 					D3D11_BOX poksi = {context->x, context->y, 0, context->x + context->width, context->y + context->height, 1};
-					context->ctx11->CopySubresourceRegion(context->texCrop, 0, 0, 0, 0, context->tex, 0, &poksi);
-					context->ctx11->Flush();
+					context->shared_context->CopySubresourceRegion(context->texCrop.Get(), 0, 0, 0, 0, context->tex.Get(), 0, &poksi);
+					context->shared_context->Flush();
 					context->lastFrame = frameTiming.m_nFrameIndex;
 				}
 			}
