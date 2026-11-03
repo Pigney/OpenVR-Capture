@@ -1,5 +1,7 @@
 # OpenVR Capture for OBS Studio
 
+## [Portions of this code were created with the assistance of ChatGPT, although not relying on it entirely (i.e. vibecoding), I still no longer consider this a feasible nor moral way to code moving forward. If I return to this project it will be to rewrite without the use of any AI.]
+
 This plugin allows capturing directly from OpenVR/SteamVR in full resolution.
 
 A fork of OBS-OpenVR-Input-Plugin, originally made by Keijo "Kegetys" Ruotsalainen
